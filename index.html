@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="一个动态歌词播放器，支持 AI 主题生成" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Folia" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <title>Folia</title>
+    <script src="/runtime-config.js"></script>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "framer-motion": "https://aistudiocdn.com/framer-motion@^12.23.24",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "react-i18next": "https://aistudiocdn.com/react-i18next@^16.3.5",
+    "i18next": "https://aistudiocdn.com/i18next@^25.6.3"
+  }
+}
+</script>
+    <!-- 首屏加载遮罩：内联样式，随 HTML 首帧一起绘制，不等 index.css 与 JS bundle。
+         由 src/utils/appSplash.ts 在 React 挂载后淡出并移除。 -->
+    <style>
+      html,
+      body {
+        background-color: #09090b;
+      }
+
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: #09090b;
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        transition: opacity 320ms ease;
+      }
+
+      #app-splash.is-hiding {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #app-splash .app-splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+        opacity: 0;
+        /* 延迟淡入：命中缓存的秒开不会闪一下遮罩内容。 */
+        animation: app-splash-in 420ms ease 180ms forwards;
+      }
+
+      /* 四块色块拼成的 F（版型同 public/icon.svg，配色同 build/icon-color.svg）。
+         容器按 250:340 的比例定宽，色块用百分比定位，跟着视口缩放。
+         循环动画：色块从上到下一块接一块向右滑一格，整个 F 像履带一样往右爬；
+         容器同时匀速向左退同样的距离，所以 F 留在原地、色块一直单向滑动，不走回头路。 */
+      #app-splash .app-splash-blocks {
+        position: relative;
+        width: clamp(88px, 15vw, 150px);
+        aspect-ratio: 250 / 340;
+        animation: app-splash-drift 2400ms linear infinite;
+      }
+
+      /* 每块两个动画：位移一圈 2400ms，颜色四圈换完一轮（每滑一次换一个颜色）。 */
+      #app-splash .app-splash-blocks span {
+        position: absolute;
+        border-radius: clamp(4px, 0.6vw, 6px);
+        animation-duration: 2400ms, 9600ms;
+        animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+        animation-iteration-count: infinite;
+      }
+
+      #app-splash .app-splash-blocks .is-top {
+        left: 40%;
+        top: 0;
+        width: 60%;
+        height: 24.71%;
+        background-color: #f7c918;
+        animation-name: app-splash-top-slide, app-splash-top-color;
+      }
+
+      #app-splash .app-splash-blocks .is-stem {
+        left: 0;
+        top: 0;
+        width: 35.2%;
+        height: 45.88%;
+        background-color: #e3342a;
+        animation-name: app-splash-stem-slide, app-splash-stem-color;
+      }
+
+      #app-splash .app-splash-blocks .is-middle {
+        left: 0;
+        top: 49.41%;
+        width: 80%;
+        height: 23.53%;
+        background-color: #1f5bc6;
+        animation-name: app-splash-middle-slide, app-splash-middle-color;
+      }
+
+      #app-splash .app-splash-blocks .is-foot {
+        left: 0;
+        top: 76.47%;
+        width: 35.2%;
+        height: 23.53%;
+        background-color: #ffffff;
+        animation-name: app-splash-foot-slide, app-splash-foot-color;
+      }
+
+      @keyframes app-splash-in {
+        to {
+          opacity: 1;
+        }
+      }
+
+      /* 一圈里四块各向右滑 100/250 = 40% 的容器宽度，容器就向左退 40%，首尾相接。 */
+      @keyframes app-splash-drift {
+        from {
+          transform: translateX(20%);
+        }
+        to {
+          transform: translateX(-20%);
+        }
+      }
+
+      /* 位移是色块自身宽度的百分比，都等于容器宽度的 40%。 */
+      @keyframes app-splash-top-slide {
+        0% {
+          transform: translateX(0);
+        }
+        22%,
+        100% {
+          transform: translateX(66.67%);
+        }
+      }
+
+      @keyframes app-splash-top-color {
+        0% {
+          background-color: #f7c918;
+        }
+        5.5% {
+          background-color: #1f5bc6;
+        }
+        25% {
+          background-color: #1f5bc6;
+        }
+        30.5% {
+          background-color: #ffffff;
+        }
+        50% {
+          background-color: #ffffff;
+        }
+        55.5% {
+          background-color: #e3342a;
+        }
+        75% {
+          background-color: #e3342a;
+        }
+        80.5%,
+        100% {
+          background-color: #f7c918;
+        }
+      }
+
+      /* 位移是色块自身宽度的百分比，都等于容器宽度的 40%。 */
+      @keyframes app-splash-stem-slide {
+        0%,
+        25% {
+          transform: translateX(0);
+        }
+        47%,
+        100% {
+          transform: translateX(113.64%);
+        }
+      }
+
+      @keyframes app-splash-stem-color {
+        0%,
+        6.25% {
+          background-color: #e3342a;
+        }
+        11.75% {
+          background-color: #f7c918;
+        }
+        31.25% {
+          background-color: #f7c918;
+        }
+        36.75% {
+          background-color: #1f5bc6;
+        }
+        56.25% {
+          background-color: #1f5bc6;
+        }
+        61.75% {
+          background-color: #ffffff;
+        }
+        81.25% {
+          background-color: #ffffff;
+        }
+        86.75%,
+        100% {
+          background-color: #e3342a;
+        }
+      }
+
+      /* 位移是色块自身宽度的百分比，都等于容器宽度的 40%。 */
+      @keyframes app-splash-middle-slide {
+        0%,
+        50% {
+          transform: translateX(0);
+        }
+        72%,
+        100% {
+          transform: translateX(50%);
+        }
+      }
+
+      @keyframes app-splash-middle-color {
+        0%,
+        12.5% {
+          background-color: #1f5bc6;
+        }
+        18% {
+          background-color: #ffffff;
+        }
+        37.5% {
+          background-color: #ffffff;
+        }
+        43% {
+          background-color: #e3342a;
+        }
+        62.5% {
+          background-color: #e3342a;
+        }
+        68% {
+          background-color: #f7c918;
+        }
+        87.5% {
+          background-color: #f7c918;
+        }
+        93%,
+        100% {
+          background-color: #1f5bc6;
+        }
+      }
+
+      /* 位移是色块自身宽度的百分比，都等于容器宽度的 40%。 */
+      @keyframes app-splash-foot-slide {
+        0%,
+        75% {
+          transform: translateX(0);
+        }
+        97%,
+        100% {
+          transform: translateX(113.64%);
+        }
+      }
+
+      @keyframes app-splash-foot-color {
+        0%,
+        18.75% {
+          background-color: #ffffff;
+        }
+        24.25% {
+          background-color: #e3342a;
+        }
+        43.75% {
+          background-color: #e3342a;
+        }
+        49.25% {
+          background-color: #f7c918;
+        }
+        68.75% {
+          background-color: #f7c918;
+        }
+        74.25% {
+          background-color: #1f5bc6;
+        }
+        93.75% {
+          background-color: #1f5bc6;
+        }
+        99.25%,
+        100% {
+          background-color: #ffffff;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #app-splash .app-splash-inner {
+          opacity: 1;
+          animation: none;
+        }
+
+        /* 不动，保持拼好的 F。 */
+        #app-splash .app-splash-blocks,
+        #app-splash .app-splash-blocks span {
+          animation: none;
+        }
+      }
+    </style>
+</head>
+  <body>
+    <div id="app-splash" role="status" aria-live="polite" aria-label="Loading Folia">
+      <div class="app-splash-inner">
+        <div class="app-splash-blocks" aria-hidden="true">
+          <span class="is-stem"></span>
+          <span class="is-top"></span>
+          <span class="is-middle"></span>
+          <span class="is-foot"></span>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        try {
+          // 需要透明背景的入口不能盖遮罩：OBS 浏览器源会被直接推流捕获，
+          // Electron 的透明播放背景 / 壁纸窗口（main.cjs 传 splash=0）会在桌面上闪一个黑块。
+          var params = new URLSearchParams(window.location.search);
+          if (params.get('obs') === '1' || window.location.pathname === '/obs' || params.get('splash') === '0') {
+            var splash = document.getElementById('app-splash');
+            if (splash) {
+              splash.remove();
+            }
+            return;
+          }
+        } catch (error) {
+          // 探测失败时保留遮罩，React 挂载后仍会移除它。
+        }
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>
