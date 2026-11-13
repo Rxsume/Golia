@@ -25,10 +25,14 @@ const LX_SOURCE_BY_PROVIDER_ID: Record<string, LxSource | undefined> = {
 
 /** The audio quality the hook asks the scripts for. */
 const LX_QUALITY = '320k';
-/** One backend gets this long before it is out of the race. */
-const LX_BACKEND_TIMEOUT_MS = 1200;
+/**
+ * One backend gets this long before it is out of the race. A backend fetch over a
+ * VPN can take well over a second (Hbd measured ~1.7s cold), so the budget is
+ * generous; the hook itself has no host timeout, and a slow URL still beats a toast.
+ */
+const LX_BACKEND_TIMEOUT_MS = 2500;
 /** The whole race gives up after this long. */
-const LX_RACE_TIMEOUT_MS = 2000;
+const LX_RACE_TIMEOUT_MS = 4000;
 
 interface LxSongIdentity {
     source: LxSource;

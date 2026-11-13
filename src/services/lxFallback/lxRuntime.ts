@@ -341,7 +341,13 @@ export class LxScriptRuntime {
     private evaluate(): boolean {
         const lx = this.buildBridge();
         // The script's own `globalThis`, chained to the real one for the built-ins.
-        const shimGlobal = Object.create(globalThis) as Record<string, unknown>;
+        // Own properties are defined BEFORE the prototype is set to the real global:
+        // a plain assignment onto an object whose prototype is `globalThis` would
+        // invoke a prototype accessor setter (where the host defines one, e.g. for
+        // `Buffer` or `fetch`) and mutate the real global instead of shadowing it.
+        // That leak deleted `Buffer.concat` on the host and broke every later
+        // `fetch` body read, so the LX scripts could never resolve a URL.
+        const shimGlobal: Record<string, unknown> = {};
         const moduleObj: { exports: Record<string, unknown> } = { exports: {} };
 
         const fetchShim = (url: string, options?: LxRequestOptions): Promise<{
@@ -407,6 +413,10 @@ export class LxScriptRuntime {
         shimGlobal.Buffer = bufferShim;
         shimGlobal.JSON = jsonShim;
         shimGlobal.cerumusic = cerumusic;
+        // Chain to the real global for the built-ins the scripts read (Object, Math,
+        // setTimeout, ...). Own properties above already shadow the names the bridge
+        // provides, so this cannot leak an assignment back to the host.
+        Object.setPrototypeOf(shimGlobal, globalThis);
 
         const paramNames = ['lx', 'module', 'exports', 'globalThis', 'global', 'self', 'fetch', 'customFetch', 'Buffer', 'JSON', 'cerumusic'];
         let fn: (...args: unknown[]) => unknown;

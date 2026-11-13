@@ -9,6 +9,7 @@ import { asRecord } from '../../../utils/record';
 import { requestNativeHttp } from '../capacitorHttp';
 import QRCode from 'qrcode';
 import { weapiEncrypt } from './neteaseWeapi';
+import { eapiEncrypt } from './neteaseEapi';
 
 // The shapes the provider reads from these answers (the backend's answers have the same shape).
 interface NeteaseQrKeyResponse { code: number; data: { unikey: string } }
@@ -205,6 +206,9 @@ const getApiBase = async () => {
 // (the iOS shell is a static web build: there is no backend to forward to). Search and the QR
 // sign-in use these; everything else still needs the configured backend.
 const NETEASE_DIRECT_BASE = 'https://music.163.com';
+// The eapi host (the Android-app flow): QR sign-in goes here, not the /weapi/ host,
+// because the platform refuses the web flow at the QR-check step with code 8821.
+const NETEASE_EAPI_BASE = 'https://interfacepc.music.163.com';
 const NETEASE_WEAPI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
 
 // Whether an API base is configured: false only where the web build has none. Any other failure
@@ -278,25 +282,39 @@ const cookieStringOfDirectResponse = (headers: Record<string, string>): string =
     .join('; ');
 };
 
-// One direct weapi request that also keeps the answer's Set-Cookie header (the QR check's login
-// cookie arrives that way as well as in the body).
-const requestNeteaseWeapiWithCookie = async (path: string, payload: Record<string, unknown>): Promise<{ body: Record<string, unknown>; cookie: string }> => {
+// One eapi request: the encrypted POST to the platform's /eapi/ URL (the Android-app
+// flow), with the sign-in cookie where one is stored. The answer is the platform's
+// JSON body. The /eapi/ path is the api path with its leading /api/ stripped.
+const requestNeteaseEapi = async (path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
   const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
-  const csrf = cookie?.match(/(?:^|;\s*)__csrf=([^;]+)/)?.[1];
-  const { params, encSecKey } = await weapiEncrypt({
-    ...payload,
-    ...(csrf ? { csrf_token: csrf } : {}),
-  });
+  const params = eapiEncrypt(path, payload);
   const headers: Record<string, string> = {
-    Referer: 'https://music.163.com',
     'User-Agent': NETEASE_WEAPI_USER_AGENT,
-    'Content-Type': 'application/x-www-form-urlencoded',
+    'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
   };
   if (cookie) headers.Cookie = cookie;
-  const response = await requestNativeHttp(`${NETEASE_DIRECT_BASE}/weapi/${path}`, {
+  const parsed = await requestNeteaseDirectJson(`${NETEASE_EAPI_BASE}/eapi/${path.replace(/^\/api\//, '')}`, {
     method: 'POST',
     headers,
-    body: new URLSearchParams({ params, encSecKey }).toString(),
+    body: new URLSearchParams({ params }).toString(),
+  });
+  return asRecord(parsed) ?? {};
+};
+
+// One direct eapi request that also keeps the answer's Set-Cookie header (the QR check's
+// login cookie arrives that way as well as in the body).
+const requestNeteaseEapiWithCookie = async (path: string, payload: Record<string, unknown>): Promise<{ body: Record<string, unknown>; cookie: string }> => {
+  const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
+  const params = eapiEncrypt(path, payload);
+  const headers: Record<string, string> = {
+    'User-Agent': NETEASE_WEAPI_USER_AGENT,
+    'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+  };
+  if (cookie) headers.Cookie = cookie;
+  const response = await requestNativeHttp(`${NETEASE_EAPI_BASE}/eapi/${path.replace(/^\/api\//, '')}`, {
+    method: 'POST',
+    headers,
+    body: new URLSearchParams({ params }).toString(),
     timeoutMs: NETEASE_ONLINE_REQUEST_LIMIT_MS,
   });
   if (!response.ok) {
@@ -917,7 +935,9 @@ export const neteaseApi = {
       const res: unknown = await fetchWithCreds(`/login/qr/key`, {}, 'sign-in');
       return res as NeteaseQrKeyResponse;
     }
-    const body = await requestNeteaseWeapi('login/qrcode/unikey', { type: 3 });
+    // eapi, not weapi: the platform refuses the web flow at the QR-check step with
+    // code 8821 ("switch login method or upgrade"); the app flow is accepted.
+    const body = await requestNeteaseEapi('/api/login/qrcode/unikey', { type: 3 });
     const unikey = body.unikey;
     if (typeof unikey !== 'string' || !unikey) {
       throw new OnlineProviderError('invalid-response', 'NetEase QR key request returned no key', 'netease');
@@ -941,7 +961,8 @@ export const neteaseApi = {
       const res: unknown = await fetchWithCreds(`/login/qr/check?key=${key}`, {}, 'sign-in');
       return asRecord(res) ?? {};
     }
-    const { body, cookie } = await requestNeteaseWeapiWithCookie('login/qrcode/client/login', { key, type: 3 });
+    // eapi, not weapi: the web flow is refused here with code 8821 once scanned.
+    const { body, cookie } = await requestNeteaseEapiWithCookie('/api/login/qrcode/client/login', { key, type: 3 });
     // The login cookie arrives in the answer body (a string) and in Set-Cookie; the provider
     // keeps it only where it is a string, so hand it over as one either way.
     const bodyCookie = typeof body.cookie === 'string' && body.cookie
@@ -1150,6 +1171,26 @@ export const neteaseApi = {
     // 'standard' often returns null or invalid links for VIP content even if logged in.
     // randomCNIP=true added to improve success rate for some restricted tracks
     // https=true ensures URLs are returned with HTTPS protocol to avoid mixed content issues
+    if (!(await hasConfiguredApiBase())) {
+      // Direct eapi song URL (the Android-app flow): free songs answer with a URL
+      // here, no backend needed. A song the platform will not serve this way
+      // (url null, code 404) falls through to the configured-backend path, which
+      // throws the not-configured error and lets the LX fallback take over.
+      try {
+        const direct = await requestNeteaseEapi('/api/song/enhance/player/url/v1', {
+          ids: JSON.stringify([id]),
+          level,
+          encodeType: 'flac',
+        });
+        const first: unknown = Array.isArray(direct.data) ? direct.data[0] : undefined;
+        const firstUrl = (first as { url?: unknown } | null | undefined)?.url;
+        if (typeof firstUrl === 'string' && firstUrl) {
+          return direct;
+        }
+      } catch {
+        // A direct failure is not the song's verdict; the fallback chain decides.
+      }
+    }
     return fetchWithCreds(`/song/url/v1?id=${id}&level=${level}&randomCNIP=true&https=true`, {}, 'online');
   },
 

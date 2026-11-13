@@ -60,7 +60,7 @@ describe('NetEase direct transport (no backend configured)', () => {
 
     it('takes a QR key straight from the platform', async () => {
         const request = nativeRequest({
-            'music.163.com/weapi/login/qrcode/unikey': JSON.stringify({ code: 200, unikey: 'direct-unikey' }),
+            'interfacepc.music.163.com/eapi/login/qrcode/unikey': JSON.stringify({ code: 200, unikey: 'direct-unikey' }),
         });
         vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
         const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
@@ -68,8 +68,9 @@ describe('NetEase direct transport (no backend configured)', () => {
         const res = await neteaseApi.getQrKey();
         expect(res).toEqual({ code: 200, data: { unikey: 'direct-unikey' } });
         const sent = request.mock.calls[0][0] as unknown as { data: string };
+        // eapi sends only the hex `params` field (no weapi `encSecKey`).
         expect(sent.data).toContain('params=');
-        expect(sent.data).toContain('encSecKey=');
+        expect(sent.data).not.toContain('encSecKey=');
     });
 
     it('renders the QR image locally', async () => {
@@ -84,7 +85,7 @@ describe('NetEase direct transport (no backend configured)', () => {
 
     it('checks a QR code straight from the platform', async () => {
         const request = nativeRequest({
-            'music.163.com/weapi/login/qrcode/client/login': JSON.stringify({ code: 801, message: '等待扫码' }),
+            'interfacepc.music.163.com/eapi/login/qrcode/client/login': JSON.stringify({ code: 801, message: '等待扫码' }),
         });
         vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
         const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');

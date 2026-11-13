@@ -47,6 +47,7 @@ interface CapacitorHttpPlugin {
 }
 
 const capacitorHttpPlugin = (): CapacitorHttpPlugin | null => {
+    if (typeof window === 'undefined') return null;
     const capacitor = (window as unknown as {
         Capacitor?: { Plugins?: { CapacitorHttp?: CapacitorHttpPlugin } };
     }).Capacitor;
