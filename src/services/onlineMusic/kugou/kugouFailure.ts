@@ -40,6 +40,10 @@ export const kugouTransportFailure = (error: unknown): {
             ...(typeof answered === 'number' ? { case: 'refused' as const, code: String(answered) } : {}),
         };
     }
+    // A direct request KuGou itself refused (a non-zero error_code in its answer): the platform
+    // answered, with its code in the message.
+    const directRefusal = /^KuGou direct request failed: (\d+)$/.exec(error.message)?.[1];
+    if (directRefusal) return { case: 'refused', code: directRefusal };
     // 旧的播放信息接口：m.kugou.com 自己回的状态在错上；没有状态的是没能问到它（连不上）。
     if (error.message.startsWith(KUGOU_LEGACY_PLAY_INFO_FAILED)) {
         return error.httpStatus === undefined ? { case: 'unreachable' } : { httpStatus: error.httpStatus };

@@ -735,6 +735,23 @@ describe('a request for audio or for a collection\'s tracks that fails', () => {
         expect(describeFailure.mock.calls.map(([operation]) => operation)).toEqual(['audio', 'collection']);
     });
 
+    it('leaves the provider\'s description on a failed daily-songs read', async () => {
+        const describeFailure = vi.fn(() => ({ case: 'not-configured' as const }));
+        registerOnlineMusicProvider({
+            ...provider(providerId, { searchSongs: async () => ({ items: [], hasMore: false, nextOffset: 0 }) }),
+            describeFailure,
+            recommendations: { getDailySongs: async () => { throw refused; } },
+        });
+        // getDailySongs reads the ACTIVE provider (withActiveProvider); the afterEach resets it
+        // to 'netease', so the mock has to be made active or the real NetEase provider answers.
+        useOnlineProviderAccountStore.getState().setActiveProviderId(providerId);
+
+        const error = await omni.getDailySongs().catch((caught: unknown) => caught);
+        expect(error).toBe(refused);
+        expect(onlineFailureOf({ operation: 'collection' }, { error })).toMatchObject({ case: 'not-configured' });
+        expect(describeFailure).toHaveBeenCalledWith('collection', refused);
+    });
+
     it('lets the error go on as it is when the provider\'s description throws', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         registerOnlineMusicProvider(failing(() => { throw new TypeError('bad'); }));

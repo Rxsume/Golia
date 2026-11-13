@@ -708,6 +708,67 @@ describe('KuGou direct transport (no backend configured)', () => {
         expect(JSON.parse(sent.data).p).toMatch(/^[0-9A-F]{256}$/);
     });
 
+    it('reads the daily recommendations straight from the platform', async () => {
+        // Shape of the live answer, 2026-11-13 (one song kept): HTTP 200, error_code 0, the songs
+        // under data.song_list.
+        const request = nativeRequest({
+            'gateway.kugou.com/everyday_song_recommend': JSON.stringify({
+                data: {
+                    song_list_size: 1,
+                    song_list: [{
+                        hash: '04D0BB746DD679A860E5438AA6F0DC97', songname: '风雨解忧',
+                        author_name: '许晰晰', album_id: '152000769', album_name: '风月解忧',
+                        songid: 535551926, time_length: 269000,
+                    }],
+                },
+                status: 1, error_code: 0,
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const body = await requestKugou('everyday_recommend');
+        expect(asRecord(asRecord(body)?.data)?.song_list_size).toBe(1);
+        const sent = request.mock.calls[0][0] as { url: string; method: string; headers: Record<string, string> };
+        expect(sent.method).toBe('POST');
+        expect(sent.url).toContain('https://gateway.kugou.com/everyday_song_recommend');
+        expect(sent.url).toContain('platform=ios');
+        expect(sent.url).toContain('signature=');
+        expect(sent.headers['x-router']).toBe('everydayrec.service.kugou.com');
+    });
+
+    it('sends the signed-in session with the daily recommendations', async () => {
+        const request = nativeRequest({
+            'gateway.kugou.com/everyday_song_recommend': JSON.stringify({
+                data: { song_list_size: 0, song_list: [] }, status: 1, error_code: 0,
+            }),
+        });
+        directStorage.set('online_provider:kugou:token', 'tok');
+        directStorage.set('online_provider:kugou:userid', '123');
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        await requestKugou('everyday_recommend');
+        const sent = request.mock.calls[0][0] as { url: string };
+        expect(sent.url).toContain('token=tok');
+        expect(sent.url).toContain('userid=123');
+    });
+
+    it('throws when KuGou refuses the daily recommendations', async () => {
+        const request = nativeRequest({
+            'gateway.kugou.com/everyday_song_recommend': JSON.stringify({
+                data: {}, status: 0, error_code: 152,
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        await expect(requestKugou('everyday_recommend')).rejects.toMatchObject({
+            code: 'network',
+            message: 'KuGou direct request failed: 152',
+        });
+    });
+
     it('still reports not-configured where there is no bridge and no backend', async () => {
         vi.stubGlobal('window', undefined);
         const { getKugouTransportAvailability } = await import('@/services/onlineMusic/kugou/kugouTransport');

@@ -962,7 +962,12 @@ export const omni = {
     },
 
     async getDailySongs(refresh?: boolean): Promise<UnifiedSong[]> {
-        return withActiveProvider(async provider => provider.recommendations?.getDailySongs?.(refresh) ?? []);
+        // Through runRequest, like the other collection reads: a failure (for example the
+        // service not being configured) carries the provider's own description, so the
+        // collection page says what happened instead of "unknown error".
+        return withActiveProvider(async provider => (
+            runRequest(provider, 'collection', async () => provider.recommendations?.getDailySongs?.(refresh) ?? [])
+        ));
     },
 
     async getRecommendationHistory(): Promise<OmniHistoryEntry[]> {

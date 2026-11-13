@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PaperShaderElement } from '@paper-design/shaders';
-import { createPaperShaderReleaseRef, PAPER_SHADER_CONTEXT_ATTRIBUTES } from '@/utils/paperShaderContext';
+import {
+    anyPaperShaderContextLost,
+    createPaperShaderReleaseRef,
+    PAPER_SHADER_CONTEXT_ATTRIBUTES,
+    watchPaperShaderContext,
+} from '@/utils/paperShaderContext';
 
 // test/unit/utils/paperShaderContext.test.ts
 // The latent background's paper shaders must give their WebGL context back when they unmount,
 // but only once the canvas has left the document (a StrictMode simulated detach keeps it).
+// They must also survive a context the browser takes while the lyric style window holds the
+// most canvases: the loss is prevented (or the browser can never restore it) and the shader is
+// rebuilt once the context comes back, or, if it never does, once it is still lost a moment later.
 
 const fakeShaderElement = (isConnected: boolean) => {
     const loseContext = vi.fn();
@@ -44,5 +52,53 @@ describe('createPaperShaderReleaseRef', () => {
 
     it('asks for a context without MSAA or depth', () => {
         expect(PAPER_SHADER_CONTEXT_ATTRIBUTES).toEqual({ antialias: false, depth: false });
+    });
+});
+
+describe('watchPaperShaderContext', () => {
+    const fakeCanvas = () => new EventTarget() as unknown as HTMLCanvasElement;
+
+    it('prevents the loss, so the browser can restore the context at all, and reports it', () => {
+        const onLost = vi.fn();
+        const canvas = fakeCanvas();
+        watchPaperShaderContext(canvas, { onLost });
+        const event = new Event('webglcontextlost', { cancelable: true });
+        canvas.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(onLost).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a restored context, so the shader can be rebuilt on it', () => {
+        const onRestored = vi.fn();
+        const canvas = fakeCanvas();
+        watchPaperShaderContext(canvas, { onRestored });
+        canvas.dispatchEvent(new Event('webglcontextrestored'));
+        expect(onRestored).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops reporting after cleanup', () => {
+        const onLost = vi.fn();
+        const onRestored = vi.fn();
+        const canvas = fakeCanvas();
+        const cleanup = watchPaperShaderContext(canvas, { onLost, onRestored });
+        cleanup();
+        canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+        canvas.dispatchEvent(new Event('webglcontextrestored'));
+        expect(onLost).not.toHaveBeenCalled();
+        expect(onRestored).not.toHaveBeenCalled();
+    });
+});
+
+describe('anyPaperShaderContextLost', () => {
+    const fakeCanvasWith = (lost: boolean | null) => ({
+        getContext: vi.fn(() => (lost === null ? null : { isContextLost: () => lost })),
+    }) as unknown as Pick<HTMLCanvasElement, 'getContext'>;
+
+    it('is true while any canvas reports its context lost', () => {
+        expect(anyPaperShaderContextLost([fakeCanvasWith(false), fakeCanvasWith(true)])).toBe(true);
+    });
+
+    it('is false when no canvas is lost, missing, or without a context', () => {
+        expect(anyPaperShaderContextLost([fakeCanvasWith(false), null, undefined, fakeCanvasWith(null)])).toBe(false);
     });
 });

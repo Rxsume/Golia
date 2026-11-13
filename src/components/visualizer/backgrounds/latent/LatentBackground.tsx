@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PaperShaderElement } from '@paper-design/shaders';
 import { Dithering, MeshGradient } from '@paper-design/shaders-react';
 import type { MotionValue } from 'framer-motion';
@@ -11,7 +11,13 @@ import {
 } from '../../../../types';
 import { extractRepresentativeColors } from '../../../../utils/colorExtractor';
 import { updatePaperShaderUniforms } from '../../../../utils/paperShaderUniforms';
-import { createPaperShaderReleaseRef, PAPER_SHADER_CONTEXT_ATTRIBUTES } from '../../../../utils/paperShaderContext';
+import {
+    anyPaperShaderContextLost,
+    createPaperShaderReleaseRef,
+    PAPER_SHADER_CONTEXT_ATTRIBUTES,
+    PAPER_SHADER_RESTORE_RETRY_MS,
+    watchPaperShaderContext,
+} from '../../../../utils/paperShaderContext';
 import { useFirstFrameDrawn } from '../../styleTransition/firstFrame';
 import { useBlendedColors } from '../useBlendedColors';
 import { beatImpact, downbeatImpact } from '../../../../stores/motionSignals';
@@ -154,6 +160,81 @@ const LatentBackground: React.FC<LatentBackgroundProps> = ({
     const showDithering = tuning.displayMode !== 'mesh';
     const showMesh = tuning.displayMode !== 'dithering';
     pausedRef.current = paused;
+    // Rebuilding the two shaders after a lost WebGL context: new elements, new canvases, new
+    // contexts. The old ones are lost by the release refs above once they leave the document.
+    // One bump rebuilds both (their keys share the generation), so a second call right after
+    // the first — both canvases are usually lost and restored together — is dropped.
+    const [shaderGeneration, setShaderGeneration] = useState(0);
+    const lastRemountRef = useRef(0);
+    const remountShaders = useCallback(() => {
+        const now = Date.now();
+        if (now - lastRemountRef.current < 500) return;
+        lastRemountRef.current = now;
+        setShaderGeneration(generation => generation + 1);
+    }, []);
+    const restoreTimerRef = useRef<number | null>(null);
+    const watchedCanvasesRef = useRef(new WeakSet<HTMLCanvasElement>());
+    // A lost context is rebuilt once it has had a moment to come back on its own: the loss
+    // usually happens while the lyric style window holds the most canvases, and rebuilding at
+    // once would only take another live context's place. The check reads the live canvases, so
+    // a restore that already happened (or a remount since) rebuilds nothing.
+    const scheduleShaderRestore = useCallback(() => {
+        if (restoreTimerRef.current !== null) return;
+        restoreTimerRef.current = window.setTimeout(() => {
+            restoreTimerRef.current = null;
+            const canvases = [
+                ditheringRef.current?.paperShaderMount?.canvasElement,
+                meshRef.current?.paperShaderMount?.canvasElement,
+            ];
+            if (anyPaperShaderContextLost(canvases)) remountShaders();
+        }, PAPER_SHADER_RESTORE_RETRY_MS);
+    }, [remountShaders]);
+    const attachContextWatch = useCallback((element: PaperShaderElement | null) => {
+        const canvas = element?.paperShaderMount?.canvasElement;
+        if (!canvas || watchedCanvasesRef.current.has(canvas)) return;
+        watchedCanvasesRef.current.add(canvas);
+        watchPaperShaderContext(canvas, {
+            onLost: scheduleShaderRestore,
+            onRestored: () => {
+                if (restoreTimerRef.current !== null) {
+                    window.clearTimeout(restoreTimerRef.current);
+                    restoreTimerRef.current = null;
+                }
+                remountShaders();
+            },
+        });
+    }, [remountShaders, scheduleShaderRestore]);
+    // The shader elements upgrade after mount, so the canvases are looked for once a frame until
+    // each one shown is watched; a remount looks again. Capped, so a mount that never appears
+    // does not poll for the life of the page.
+    useEffect(() => {
+        let frame = 0;
+        let stopped = false;
+        let tries = 0;
+        const isWatched = (element: PaperShaderElement | null) => {
+            const canvas = element?.paperShaderMount?.canvasElement;
+            return canvas !== undefined && watchedCanvasesRef.current.has(canvas);
+        };
+        const look = () => {
+            if (stopped) return;
+            attachContextWatch(ditheringRef.current);
+            attachContextWatch(meshRef.current);
+            tries += 1;
+            const pending = tries < 300 && (
+                (showDithering && !isWatched(ditheringRef.current))
+                || (showMesh && !isWatched(meshRef.current))
+            );
+            if (pending) frame = requestAnimationFrame(look);
+        };
+        look();
+        return () => {
+            stopped = true;
+            cancelAnimationFrame(frame);
+        };
+    }, [attachContextWatch, shaderGeneration, showDithering, showMesh]);
+    useEffect(() => () => {
+        if (restoreTimerRef.current !== null) window.clearTimeout(restoreTimerRef.current);
+    }, []);
     // A copy mounted for a change of type is ready once the cover's colours are read.
     const colorsDrawn = useFirstFrameDrawn();
 
@@ -350,6 +431,7 @@ const LatentBackground: React.FC<LatentBackgroundProps> = ({
                     style={{ transform: 'scale(1.025)', transformOrigin: 'center' }}
                 >
                     <MeshGradient
+                        key={`latent-mesh-${shaderGeneration}`}
                         ref={meshShaderRef}
                         width="100%"
                         height="100%"
@@ -378,6 +460,7 @@ const LatentBackground: React.FC<LatentBackgroundProps> = ({
                     }}
                 >
                     <Dithering
+                        key={`latent-dithering-${shaderGeneration}`}
                         ref={ditheringShaderRef}
                         width="100%"
                         height="100%"

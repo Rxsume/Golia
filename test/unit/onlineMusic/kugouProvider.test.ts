@@ -1896,6 +1896,33 @@ describe('kugouProvider', () => {
         });
     });
 
+    it('reads the daily songs from the everyday_recommend answer', async () => {
+        // Shape of the live answer, 2026-11-13 (one song kept): the songs under data.song_list.
+        requestMock.mockResolvedValueOnce({
+            data: {
+                song_list_size: 1,
+                song_list: [{
+                    hash: '04D0BB746DD679A860E5438AA6F0DC97', songname: '风雨解忧',
+                    author_name: '许晰晰', album_id: '152000769', album_name: '风月解忧',
+                    songid: 535551926, time_length: 269000,
+                }],
+            },
+            status: 1, error_code: 0,
+        });
+
+        const songs = await kugouProvider.recommendations?.getDailySongs?.();
+
+        expect(requestMock).toHaveBeenCalledWith('everyday_recommend');
+        expect(songs).toHaveLength(1);
+        expect(songs?.[0]).toMatchObject({
+            id: '04D0BB746DD679A860E5438AA6F0DC97',
+            name: '风雨解忧',
+            artists: [{ name: '许晰晰' }],
+            album: { id: '152000769', name: '风月解忧' },
+            durationMs: 269000,
+        });
+    });
+
     it('maps youth card songs to album metadata instead of uploader metadata', async () => {
         const youthSong = {
             hash: 'feec2c114d55b5f49db3960273f237cc',

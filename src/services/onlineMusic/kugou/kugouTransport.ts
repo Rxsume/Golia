@@ -87,8 +87,10 @@ export const KUGOU_API_BASE_MISSING = 'VITE_KUGOU_API_BASE is not configured';
 
 // The operations the web build can serve directly, without a configured backend, where the
 // shell has a native bridge: the QR sign-in (its upstream endpoints take a signed GET) and the
-// account read the sign-in ends with. Everything else still needs the configured backend.
-const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail']);
+// account read the sign-in ends with, plus the daily recommendations (an Android-signed POST
+// to the gateway, routed to the daily-recommendation service). Everything else still needs the
+// configured backend.
+const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail', 'everyday_recommend']);
 
 // The QR image the key endpoint itself returns, kept by key until the image is asked for:
 // asking for a key again would mint a different code and orphan the one on screen.
@@ -226,6 +228,27 @@ const requestKugouDirectUserDetail = async (params: KugouParams): Promise<unknow
     });
 };
 
+// The daily recommendations, straight from the platform (KuGouMusicApi module/everyday_recommend.js):
+// an Android-signed POST to the gateway, routed to the daily-recommendation service. The session's
+// token and userid ride along in the signed query where one is stored, so a signed-in account gets
+// its own list; without one KuGou still answers with the generic list of the day (verified live
+// 2026-11-13: HTTP 200, error_code 0, 30 songs under data.song_list). A non-zero error_code is the
+// platform refusing, so it throws instead of coming back as an empty list.
+const requestKugouDirectEverydayRecommend = async (): Promise<unknown> => {
+    const { params, headers } = directDefaults();
+    const query: Record<string, string | number> = { ...params, platform: 'ios' };
+    query.signature = signatureAndroidParams(query, '');
+    const body = await requestKugouDirectJson(signedUrl('https://gateway.kugou.com/everyday_song_recommend', query), {
+        method: 'POST',
+        headers: { ...headers, 'x-router': 'everydayrec.service.kugou.com' },
+    });
+    const errorCode = Number(asRecord(body)?.error_code);
+    if (Number.isFinite(errorCode) && errorCode !== 0 && errorCode !== 200) {
+        throw new OnlineProviderError('network', `KuGou direct request failed: ${errorCode}`, 'kugou');
+    }
+    return body;
+};
+
 // One direct operation, in the shape the web backend would have answered with.
 const requestKugouDirect = async (operation: KugouOperation, params: KugouParams): Promise<unknown> => {
     if (operation === 'login_qr_key') return requestKugouDirectQrKey();
@@ -239,6 +262,7 @@ const requestKugouDirect = async (operation: KugouOperation, params: KugouParams
         return response;
     }
     if (operation === 'user_detail') return requestKugouDirectUserDetail(params);
+    if (operation === 'everyday_recommend') return requestKugouDirectEverydayRecommend();
     throw new OnlineProviderError('unavailable', KUGOU_API_BASE_MISSING, 'kugou');
 };
 

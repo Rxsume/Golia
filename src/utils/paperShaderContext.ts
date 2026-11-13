@@ -41,3 +41,56 @@ export const createPaperShaderReleaseRef = (target: { current: PaperShaderElemen
         };
     }
 );
+
+/** How long a lost context gets to come back on its own before the shader is rebuilt. */
+export const PAPER_SHADER_RESTORE_RETRY_MS = 2000;
+
+/** Listeners for one paper shader canvas's WebGL context. */
+export interface PaperShaderContextWatch {
+    /** The context was lost: the canvas draws nothing until it is restored or rebuilt. */
+    onLost?: () => void;
+    /** The context came back: the shader's GL resources are gone with it, so it must be rebuilt. */
+    onRestored?: () => void;
+}
+
+/**
+ * Watches one paper shader's canvas for a lost WebGL context, so a loss does not leave the
+ * background black for good.
+ *
+ * Opening the lyric style window holds the most canvases on the page at once (the playing page's
+ * shaders, the window's own sample, and the style pictures made one after another), and the
+ * browser answers by losing the oldest context, which is the playing page's (pictureTurns.ts:
+ * 16 contexts, the oldest lost). paper-shaders listens for neither event, so without this the
+ * loss is final: the canvas stays blank behind the lyrics until the page reloads.
+ *
+ * Preventing the loss is what lets the browser restore the context at all; without the
+ * preventDefault the loss can never be undone. Returns a cleanup that removes both listeners.
+ */
+export const watchPaperShaderContext = (
+    canvas: Pick<HTMLCanvasElement, 'addEventListener' | 'removeEventListener'>,
+    watch: PaperShaderContextWatch,
+): (() => void) => {
+    const onLost = (event: Event) => {
+        event.preventDefault();
+        watch.onLost?.();
+    };
+    const onRestored = () => watch.onRestored?.();
+    canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
+    return () => {
+        canvas.removeEventListener('webglcontextlost', onLost);
+        canvas.removeEventListener('webglcontextrestored', onRestored);
+    };
+};
+
+/**
+ * Whether any of the given canvases still has no WebGL context to draw with. Only call it on
+ * canvases known to hold a webgl2 context already (a paper shader's mount): asking a canvas
+ * that has none for one would create it.
+ */
+export const anyPaperShaderContextLost = (
+    canvases: ReadonlyArray<Pick<HTMLCanvasElement, 'getContext'> | null | undefined>,
+): boolean => canvases.some(canvas => {
+    const gl = canvas?.getContext('webgl2');
+    return gl?.isContextLost() ?? false;
+});

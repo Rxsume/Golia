@@ -252,11 +252,13 @@ button.top-5.left-6.w-10.h-10 > svg {
    面板开关的容器是 fixed right-0 + pr-4（md 下 pr-8）。
    按钮按 44pt 物理尺寸反算，横竖屏都是圆形；位置以主页 .lattice-tools 为基准右移 14px。 */
 [data-testid="panel-toggle"] {
-  /* 与主页 .lattice-tools 同一套定位：右侧 40pt、底部 18pt，再右移 14px。
+  /* 与主页 .lattice-tools 同一套定位：右侧 40pt，再右移 14px。
      容器内有 pr-4（md 下 pr-8）；触屏收起时按钮还有 translate-x-1/2（24px）。
-     right = 40/scale + 40px/scale - 14px - 16px + 24px。 */
+     right = 40/scale + 40px/scale - 14px - 16px + 24px。
+     注意（lx7）：bottom 覆盖已删——原来钉死在 safe-area+18px，胶囊随 playerBottomBarLiveOffset
+     抬升时 X 钮不跟走，未播放时伸出条外约 10pt。删掉后 PanelHandle 自带的
+     style={{ bottom: bottomBarBottomPx }} 生效，与胶囊用同一 live offset 对齐。 */
   right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 40px / var(--ios-scale, 1) - 14px - 16px) !important;
-  bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ios-scale, 1) + 18px / var(--ios-scale, 1)) !important;
 }
 @media (min-width: 768px) {
   [data-testid="panel-toggle"] {
@@ -676,4 +678,34 @@ button.top-6.left-6.h-10.w-10 {
 .scratchpad-edge {
   top: 50% !important;
   transform: translateY(-50%) !important;
+}
+
+/* ══════════ 2026-11-13 lx7：控制面板错位修复 + 界面精确数（用户 23:11 给数，以这次为准） ══════════
+   - 返回箭头：总计上移 10.5pt。lx6 是 11.5pt（safe-area+0.5px），本轮下移 1pt → safe-area+1.5px（12−10.5=+1.5）。
+     22:43 那版的 11.5pt 作废，以本版为准。
+   - 首页搜索框：总计右 13pt、上 13pt。lx6 是 16pt/16pt，本轮改成 translate(13px,−13px)，即比 lx6 左移 3pt、下移 3pt。
+     缩短维持 lx6 幅度（手机 70%、桌面 158px，聚焦 202px 可展开）。
+   - 速记簿竖条：lx6 的移中（top: 50% + translateY(-50%)）不变，本轮不动。
+   - 控制面板错位（用户 22:56/22:58 两张图，lx5 真机）：总根因是两处旧覆盖——
+     (1) :96–98 全局 button min-height 36/scale 在 scale≈0.8 下把面板里 28/32/36px 的小钮撑到约 45px，
+         分段高亮块（Segments mark 是 inset-0 跟钮走）跟着下伸 4–6pt，日/月切换、默认/AI主题/自定义、底部 Tab「控制」
+         高亮都伸出轨道下缘，ab/刷新/图层钮被拉成 28×45 的竖长方形；
+     (2) 面板滚动容器 PanelShell 只写了 paddingLeft: 12px、没有 paddingRight，外层 body 又 marginInline: -12px，
+         所有右对齐行（ab/刷新/图层钮、标准芯片、> 箭头、100%、生成AI主题钮、透明背景开关）右缘都贴到卡片边框。
+     另：panel-toggle 的 bottom 覆盖已在上面删掉（见该规则处注释），X 钮改回跟胶囊同一 live offset。 */
+button.top-6.left-6.h-10.w-10 {
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 1.5px / var(--ios-scale, 1)) !important;
+}
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+  transform: translate(calc(13px / var(--ios-scale, 1)), calc(-13px / var(--ios-scale, 1))) !important;
+}
+/* 面板内小控件豁免全局 button min-height：面板本就是 28–36px 的密集控件设计，min-height 不改变布局高度、
+   只会把钮撑破容器（高亮块下伸、钮变竖长）。只豁免面板面内，面板开关（panel-toggle）的 44pt 尺寸规则在面外、不受影响。 */
+[data-testid="unified-panel-surface"] button,
+[data-testid="unified-panel-surface"] [role="button"] {
+  min-height: 0 !important;
+}
+/* 面板滚动容器补右内边距，与左 12px 对称；右对齐行一次收进卡片内。 */
+[data-testid="unified-panel-surface"] .st-scroll {
+  padding-right: 12px !important;
 }
