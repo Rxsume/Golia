@@ -709,3 +709,32 @@ button.top-6.left-6.h-10.w-10 {
 [data-testid="unified-panel-surface"] .st-scroll {
   padding-right: 12px !important;
 }
+
+/* ══════════ 2026-11-14 lx8：搜索框往左移（用户 00:28 反馈） ══════════
+   - 首页搜索框：右移从 lx7 的 13px 减到 8px（往左 5pt），上移保持 13px 不变。
+     缩短幅度维持 lx6（手机 70%、桌面 158px、聚焦 202px 可展开）。
+   - 本段只改搜索框；X 钮与网易云登录见下面各段（调查员结论定稿后补）。 */
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+  transform: translate(calc(8px / var(--ios-scale, 1)), calc(-13px / var(--ios-scale, 1))) !important;
+}
+
+/* ══════════ 2026-11-14 lx8：播放页 X 钮错位（用户 00:28 图二，lx7 修法未生效） ══════════
+   真根因（调查员实测，图 1320×2868 @3x，scale 0.9）：不是 bottom，是 dock 平移量算错了基准。
+   - 胶囊边框底边 = offset − 16 + 20/scale（本文件 margin-bottom: 20/scale 把胶囊连中心一起抬了
+     22.2 CSS px），胶囊中心 = offset + 12 + 20/scale（offset 32 时 66.2，与图上实测 67.6 差 1.4）。
+   - bottomDock.css 的 docked 平移按桌面几何算：假设胶囊底距 16、中心离底 44，下移 12px；
+     iOS 上靶心实际在 66.2，X 中心被定在 44.4，比胶囊中心低 22.6，下沿伸出胶囊底 14.8。
+   - lx7 为什么没生效：删 bottom 前，钉死的 bottom ≈ 57.8 恰好在数值上补偿了这 22px 误差
+     （X 中心 70.2，只比胶囊中心高 4，基本对齐）；删之后内联 bottom = offset = 32 生效，
+     补偿没了，误差原形毕露——删 bottom 本身没错，错的是它修的不是病根。
+   - 修正量：未 dock 中心 = offset + 22/scale，靶心 = offset + 12 + 20/scale，
+     纵向平移应为 2/scale − 12（0.9 下为 −9.8，即上移约 10pt，而非下移 12px）。
+     只覆盖 docked 态；横向分量与 scale .8333 原样照抄 bottomDock.css，不动。
+     本文件只由 iOS 壳的 index.html 加载，桌面端不受影响；选择器（属性 + 2 类）
+     特异性高于 bottomDock.css 的 2 类，另加 !important。
+   - 验算（scale 0.9，offset 32）：X 中心 = 32 + 24.4 + 9.8 = 66.2 = 胶囊中心；
+     下沿 45.8、上沿 86.6，完整落在胶囊（38.2–94.2）内，上下各留 7.6，与暂停钮留白（8.3）一致。
+   - 横向未动：X 中心距右 54.8（靶点 40），仍在胶囊内、用户未投诉，另立项再说。 */
+[data-testid="panel-toggle"].dock-companion--panel.is-docked {
+  translate: calc(var(--dock-edge-pad) - var(--dock-capsule-right) - 4px) calc(2px / var(--ios-scale, 1) - 12px) !important;
+}

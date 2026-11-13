@@ -108,6 +108,60 @@ const encryptBlock = (block: Uint8Array, roundKeys: Uint8Array): Uint8Array => {
     return state;
 };
 
+// The inverse S-box, derived from SBOX at load so the two tables cannot drift.
+const INV_SBOX: Uint8Array = (() => {
+    const inv = new Uint8Array(256);
+    for (let i = 0; i < 256; i += 1) inv[SBOX[i]] = i;
+    return inv;
+})();
+
+// Inverse MixColumns multipliers, built from xtime like the forward ones.
+const mul9 = (value: number): number => mul2(mul2(mul2(value))) ^ value;
+const mul11 = (value: number): number => mul2(mul2(mul2(value))) ^ mul2(value) ^ value;
+const mul13 = (value: number): number => mul2(mul2(mul2(value))) ^ mul2(mul2(value)) ^ value;
+const mul14 = (value: number): number => mul2(mul2(mul2(value))) ^ mul2(mul2(value)) ^ mul2(value);
+
+const invSubBytes = (state: Uint8Array): void => {
+    for (let i = 0; i < 16; i += 1) state[i] = INV_SBOX[state[i]];
+};
+
+const invShiftRows = (state: Uint8Array): void => {
+    // Row r rotates right by r (the inverse of shiftRows).
+    for (let row = 1; row < 4; row += 1) {
+        const tmp = [state[row], state[4 + row], state[8 + row], state[12 + row]];
+        for (let col = 0; col < 4; col += 1) state[4 * col + row] = tmp[(col - row + 4) % 4];
+    }
+};
+
+const invMixColumns = (state: Uint8Array): void => {
+    for (let col = 0; col < 4; col += 1) {
+        const base = 4 * col;
+        const a0 = state[base];
+        const a1 = state[base + 1];
+        const a2 = state[base + 2];
+        const a3 = state[base + 3];
+        state[base] = mul14(a0) ^ mul11(a1) ^ mul13(a2) ^ mul9(a3);
+        state[base + 1] = mul9(a0) ^ mul14(a1) ^ mul11(a2) ^ mul13(a3);
+        state[base + 2] = mul13(a0) ^ mul9(a1) ^ mul14(a2) ^ mul11(a3);
+        state[base + 3] = mul11(a0) ^ mul13(a1) ^ mul9(a2) ^ mul14(a3);
+    }
+};
+
+const decryptBlock = (block: Uint8Array, roundKeys: Uint8Array): Uint8Array => {
+    const state = new Uint8Array(block);
+    addRoundKey(state, roundKeys, 10);
+    for (let round = 9; round >= 1; round -= 1) {
+        invShiftRows(state);
+        invSubBytes(state);
+        addRoundKey(state, roundKeys, round);
+        invMixColumns(state);
+    }
+    invShiftRows(state);
+    invSubBytes(state);
+    addRoundKey(state, roundKeys, 0);
+    return state;
+};
+
 /** Key and IV exactly like the native bridge: truncate to 16 bytes, zero-pad when shorter. */
 const normalize16 = (bytes: Uint8Array): Uint8Array => {
     if (bytes.length === 16) return bytes;
@@ -136,6 +190,36 @@ export const aesEncryptBytes = (data: Uint8Array, mode: string, key: Uint8Array,
         const encrypted = encryptBlock(input, roundKeys);
         out.set(encrypted, offset);
         previous = encrypted;
+    }
+    return out;
+};
+
+/** AES-128 decrypt of raw bytes; `mode` containing 'ecb' selects ECB, anything else is CBC. */
+export const aesDecryptBytes = (data: Uint8Array, mode: string, key: Uint8Array, iv: Uint8Array): Uint8Array => {
+    if (data.length === 0 || data.length % 16 !== 0) return new Uint8Array(0);
+    const roundKeys = expandKey(normalize16(key));
+    const useEcb = mode.toLowerCase().includes('ecb');
+    const ivBlock = normalize16(iv);
+    const out = new Uint8Array(data.length);
+    let previous = ivBlock;
+    for (let offset = 0; offset < data.length; offset += 16) {
+        const block = data.subarray(offset, offset + 16);
+        const decrypted = decryptBlock(block, roundKeys);
+        const plain = new Uint8Array(16);
+        for (let i = 0; i < 16; i += 1) plain[i] = useEcb ? decrypted[i] : decrypted[i] ^ previous[i];
+        out.set(plain, offset);
+        // CBC chains on the ciphertext block, not the plaintext.
+        previous = block;
+    }
+    // Strip PKCS7 padding when it is well-formed; otherwise hand back the raw
+    // bytes and let the caller decide the body is unreadable.
+    const pad = out[out.length - 1];
+    if (pad >= 1 && pad <= 16) {
+        let valid = true;
+        for (let i = out.length - pad; i < out.length; i += 1) {
+            if (out[i] !== pad) { valid = false; break; }
+        }
+        if (valid) return out.subarray(0, out.length - pad);
     }
     return out;
 };

@@ -774,4 +774,50 @@ describe('KuGou direct transport (no backend configured)', () => {
         const { getKugouTransportAvailability } = await import('@/services/onlineMusic/kugou/kugouTransport');
         expect(getKugouTransportAvailability()).toEqual({ configured: false, reason: 'not-configured' });
     });
+
+    it('searches lyrics and downloads one straight from the platform (lx8)', async () => {
+        const lrc = '[ar:林俊杰][ti:Always Online]\n[00:16.91]变色的生活任性的挑拨\n';
+        const request = nativeRequest({
+            'krcs.kugou.com/search': JSON.stringify({
+                status: 200, errcode: 200,
+                candidates: [{
+                    id: 175308623, accesskey: '69D12CEFAF70DA588208CAF32B13D1D6',
+                    song: 'Always Online', singer: '林俊杰', duration: 225151,
+                }],
+            }),
+            'lyrics.kugou.com/download': JSON.stringify({
+                status: 200, fmt: 'lrc',
+                content: Buffer.from(lrc, 'utf-8').toString('base64'),
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const candidates = await requestKugou('search_lyric', { hash: '16A4E4895905B703AC0F31007A495D4C', duration: 225000 });
+        expect(asRecord(candidates)?.candidates).toHaveLength(1);
+        const sentSearch = request.mock.calls[0][0] as { url: string };
+        expect(sentSearch.url).toContain('https://krcs.kugou.com/search');
+        expect(sentSearch.url).toContain('hash=16A4E4895905B703AC0F31007A495D4C');
+        expect(sentSearch.url).toContain('man=yes');
+        expect(sentSearch.url).toContain('duration=225000');
+
+        const lyric = await requestKugou('lyric', { id: '175308623', accesskey: '69D12CEFAF70DA588208CAF32B13D1D6', fmt: 'lrc', decode: true });
+        // decodeContent is real UTF-8 text: a bare atob would leave 林俊杰 as mojibake.
+        expect(asRecord(lyric)?.decodeContent).toBe(lrc);
+        const sentLyric = request.mock.calls[1][0] as { url: string };
+        expect(sentLyric.url).toContain('https://lyrics.kugou.com/download');
+        expect(sentLyric.url).toContain('id=175308623');
+    });
+
+    it('still refuses operations with no direct route when no backend is configured (lx8)', async () => {
+        const request = nativeRequest({});
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        await expect(requestKugou('user_playlist', { userid: '9' })).rejects.toMatchObject({
+            code: 'unavailable',
+            message: 'VITE_KUGOU_API_BASE is not configured',
+        });
+        expect(request).not.toHaveBeenCalled();
+    });
 });

@@ -1737,7 +1737,7 @@ export default function App() {
         return true;
     }, []);
     const handleSleepTimerExpireFallback = useCallback(() => {
-        pausePlayback();
+        void pausePlayback();
         setStatusMsg({ type: 'info', text: t('notifications.sleepTimerPlaybackPaused') });
     }, [pausePlayback, setStatusMsg, t]);
     useSleepTimer({

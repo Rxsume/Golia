@@ -14,8 +14,8 @@ import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 // stale - a resume, a second pause, a track change - bumps the generation, and the timer checks it
 // before touching the audio element.
 
-/** One fixed length for both directions. Long enough to avoid the click, short enough to feel instant. */
-export const PLAYBACK_FADE_SECONDS = 0.2;
+/** One fixed length for both directions. Long enough to hear (0.2s is near the perception threshold on a phone speaker), short enough to feel instant. */
+export const PLAYBACK_FADE_SECONDS = 0.35;
 
 /** Added to the timer so the audio thread has finished the ramp before the element is paused. */
 const TIMER_GRACE_MS = 15;
@@ -120,11 +120,20 @@ export const createPlaybackFadeController = ({
     };
 
     // Only a graph that can actually play out a ramp: a suspended context never advances it, which
-    // would hold the pause for a fade that is not happening.
+    // would hold the pause for a fade that is not happening. A miss here is logged, not silent:
+    // on iOS the pause path used to fall back to a hard cut with no trace of which gate failed
+    // (lx8 — the toggle looked "on but dead"). The feature-off case stays quiet on purpose.
     const resolveUsableGraph = (): PlaybackFadeGraph | null => {
         if (!isEnabled()) return null;
         const graph = getGraph();
-        if (!graph || graph.context.state !== 'running') return null;
+        if (!graph) {
+            console.warn('[PlaybackFade] fade unavailable: no graph registered');
+            return null;
+        }
+        if (graph.context.state !== 'running') {
+            console.warn('[PlaybackFade] fade unavailable: context state is', graph.context.state);
+            return null;
+        }
         return graph;
     };
 

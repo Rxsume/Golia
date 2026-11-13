@@ -110,6 +110,31 @@ describe('fadeOutThen', () => {
         expect(gain()).toBe(1);
     });
 
+    it('says which gate failed when the fade is on but unusable, and stays quiet when off (lx8)', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const pause = vi.fn();
+
+            enabled = true;
+            hasGraph = false;
+            expect(makeController().fadeOutThen(pause)).toBe(false);
+            expect(warn).toHaveBeenCalledWith('[PlaybackFade] fade unavailable: no graph registered');
+
+            warn.mockClear();
+            hasGraph = true;
+            graph.setState('suspended');
+            expect(makeController().fadeOutThen(pause)).toBe(false);
+            expect(warn).toHaveBeenCalledWith('[PlaybackFade] fade unavailable: context state is', 'suspended');
+
+            warn.mockClear();
+            enabled = false;
+            expect(makeController().fadeOutThen(pause)).toBe(false);
+            expect(warn).not.toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     it('is idempotent while a fade-out is pending', () => {
         const fade = makeController();
         const first = vi.fn();

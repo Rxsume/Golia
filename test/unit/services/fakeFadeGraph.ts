@@ -1,3 +1,4 @@
+import { vi, type Mock } from 'vitest';
 import type { PlaybackFadeGraph } from '@/services/playbackFade';
 
 // test/unit/services/fakeFadeGraph.ts
@@ -45,6 +46,7 @@ export type FakeFadeGraph = PlaybackFadeGraph & {
     clock: { now: number };
     param: ReturnType<typeof createFakeParam>;
     setState: (state: AudioContextState) => void;
+    resume: Mock<() => Promise<void>>;
 };
 
 export const createFakeFadeGraph = (): FakeFadeGraph => {
@@ -53,11 +55,16 @@ export const createFakeFadeGraph = (): FakeFadeGraph => {
     Object.defineProperty(context, 'currentTime', { get: () => clock.now });
     const param = createFakeParam(() => clock.now);
     const gain = { gain: param } as unknown as GainNode;
+    // Wakes the context like a real AudioContext.resume: resolves once the state is running.
+    const resume = vi.fn(async () => {
+        context.state = 'running';
+    });
     return {
-        context: context as unknown as AudioContext,
+        context: Object.assign(context, { resume }) as unknown as AudioContext,
         gain,
         clock,
         param,
         setState: (state) => { context.state = state; },
+        resume,
     };
 };

@@ -77,7 +77,7 @@ type UsePlaybackInteractionBridgeParams = {
     handleNextTrack: () => Promise<void> | void;
     handlePrevTrack: () => void;
     navigateBackFromPlayer: () => void;
-    pausePlayback: () => void;
+    pausePlayback: () => Promise<void>;
     resumePlayback: () => Promise<void>;
     syncStageLyricsClock: (timeSec: number, endTimeSec: number, nextPlayerState: PlayerState, startTimeSec?: number) => void;
 };
@@ -144,7 +144,7 @@ export function usePlaybackInteractionBridge({
 
         if (activePlaybackContext === 'stage' && stageActiveEntryKind === 'lyrics' && !audioSrc) {
             if (playerState === PlayerState.PLAYING) {
-                pausePlayback();
+                void pausePlayback();
             } else {
                 startPlaybackFromInteraction();
             }
@@ -156,7 +156,7 @@ export function usePlaybackInteractionBridge({
             if (hifiTransport.isPaused()) {
                 startPlaybackFromInteraction();
             } else {
-                pausePlayback();
+                void pausePlayback();
             }
             return;
         }
@@ -166,7 +166,7 @@ export function usePlaybackInteractionBridge({
             if (isExternalPaused()) {
                 startPlaybackFromInteraction();
             } else {
-                pausePlayback();
+                void pausePlayback();
             }
             return;
         }
@@ -179,13 +179,13 @@ export function usePlaybackInteractionBridge({
         }
 
         if (isTransitionAudible?.()) {
-            pausePlayback();
+            void pausePlayback();
             return;
         }
 
         if (audioRef.current) {
             if (!audioRef.current.paused && !audioRef.current.ended) {
-                pausePlayback();
+                void pausePlayback();
             } else {
                 startPlaybackFromInteraction();
             }

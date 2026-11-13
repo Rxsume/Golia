@@ -212,12 +212,12 @@ describe('transport on the HiFi route', () => {
         expect(host.params.syncOutputGain).not.toHaveBeenCalled();
         expect(usePlaybackStore.getState().playerState).toBe(PlayerState.PLAYING);
     });
-    it('pauses mpv at once, without the fade', () => {
+    it('pauses mpv at once, without the fade', async () => {
         const pause = vi.spyOn(hifiTransport, 'pause').mockResolvedValue(undefined);
         usePlaybackStore.setState({ playerState: PlayerState.PLAYING });
         const host = mount();
         host.audio.paused = false;
-        act(() => host.actions().pausePlayback());
+        await act(async () => { await host.actions().pausePlayback(); });
         expect(pause).toHaveBeenCalledTimes(1);
         expect(host.audio.pause).not.toHaveBeenCalled();
         expect(usePlaybackStore.getState().playerState).toBe(PlayerState.PAUSED);

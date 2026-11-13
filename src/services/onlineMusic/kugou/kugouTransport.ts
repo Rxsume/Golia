@@ -88,9 +88,10 @@ export const KUGOU_API_BASE_MISSING = 'VITE_KUGOU_API_BASE is not configured';
 // The operations the web build can serve directly, without a configured backend, where the
 // shell has a native bridge: the QR sign-in (its upstream endpoints take a signed GET) and the
 // account read the sign-in ends with, plus the daily recommendations (an Android-signed POST
-// to the gateway, routed to the daily-recommendation service). Everything else still needs the
-// configured backend.
-const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail', 'everyday_recommend']);
+// to the gateway, routed to the daily-recommendation service), plus the lyric lookup and
+// download (the platform's public lyric hosts, no signature or cookie needed). Everything
+// else still needs the configured backend.
+const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail', 'everyday_recommend', 'search_lyric', 'lyric']);
 
 // The QR image the key endpoint itself returns, kept by key until the image is asked for:
 // asking for a key again would mint a different code and orphan the one on screen.
@@ -249,6 +250,52 @@ const requestKugouDirectEverydayRecommend = async (): Promise<unknown> => {
     return body;
 };
 
+// Lyric candidates, straight from the platform's public lyric host
+// (verified live 2026-11-14: hash 16A4E4895905B703AC0F31007A495D4C, Always Online,
+// returns candidates[0] id 175308623, accesskey 69D12CEFAF70DA588208CAF32B13D1D6).
+// The answer shape ({ candidates: [...] }) is what getKugouLyricCandidate already reads.
+// man is fixed to 'yes' here on purpose (the caller's man is ignored): the live
+// answer was verified with man=yes (multiple candidates, the provider takes [0]);
+// decode is likewise always applied below, whatever the caller passed.
+const requestKugouDirectSearchLyric = async (params: KugouParams): Promise<unknown> => {
+    const targetUrl = new URL('https://krcs.kugou.com/search');
+    targetUrl.searchParams.set('ver', '1');
+    targetUrl.searchParams.set('man', 'yes');
+    targetUrl.searchParams.set('client', 'pc');
+    targetUrl.searchParams.set('hash', String(params.hash ?? '').toUpperCase());
+    targetUrl.searchParams.set('duration', String(params.duration ?? ''));
+    if (params.album_audio_id !== undefined) targetUrl.searchParams.set('album_audio_id', String(params.album_audio_id));
+    return requestKugouDirectJson(targetUrl.toString(), {});
+};
+
+// One lyric file, straight from the platform's public lyric host
+// (verified live 2026-11-14: id 175308623 returns { status:200, fmt:"lrc",
+// content:"<base64>" }, 1389 chars of LRC after decoding; fmt=krc works the same).
+// The host answers { content: base64 }, while the provider reads the backend-decoded
+// `decodeContent`, so the base64 is decoded here and handed over under that name.
+// The content is UTF-8 text: decode through TextDecoder, not a bare atob (which would
+// leave every multi-byte character as mojibake).
+const requestKugouDirectLyric = async (params: KugouParams): Promise<unknown> => {
+    const targetUrl = new URL('https://lyrics.kugou.com/download');
+    targetUrl.searchParams.set('ver', '1');
+    targetUrl.searchParams.set('client', 'pc');
+    targetUrl.searchParams.set('id', String(params.id ?? ''));
+    targetUrl.searchParams.set('accesskey', String(params.accesskey ?? ''));
+    targetUrl.searchParams.set('fmt', String(params.fmt ?? 'krc'));
+    targetUrl.searchParams.set('charset', 'utf8');
+    const parsed = asRecord(await requestKugouDirectJson(targetUrl.toString(), {})) ?? {};
+    const content = typeof parsed.content === 'string' ? parsed.content : '';
+    let decodeContent = '';
+    if (content) {
+        try {
+            decodeContent = new TextDecoder('utf-8').decode(Uint8Array.from(atob(content), c => c.charCodeAt(0)));
+        } catch {
+            // Malformed base64: leave decodeContent empty; the provider treats it as no lyric.
+        }
+    }
+    return { ...parsed, decodeContent };
+};
+
 // One direct operation, in the shape the web backend would have answered with.
 const requestKugouDirect = async (operation: KugouOperation, params: KugouParams): Promise<unknown> => {
     if (operation === 'login_qr_key') return requestKugouDirectQrKey();
@@ -263,6 +310,8 @@ const requestKugouDirect = async (operation: KugouOperation, params: KugouParams
     }
     if (operation === 'user_detail') return requestKugouDirectUserDetail(params);
     if (operation === 'everyday_recommend') return requestKugouDirectEverydayRecommend();
+    if (operation === 'search_lyric') return requestKugouDirectSearchLyric(params);
+    if (operation === 'lyric') return requestKugouDirectLyric(params);
     throw new OnlineProviderError('unavailable', KUGOU_API_BASE_MISSING, 'kugou');
 };
 

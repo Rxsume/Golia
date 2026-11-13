@@ -267,15 +267,24 @@ export async function loadOnlineSongLyrics(
             chorusRanges: [],
           }
         : await (async () => {
-            const result = await omni.getLyrics(song, { userId });
-            return {
-                mainLrc: result.mainText ?? null,
-                yrcLrc: result.wordByWordText ?? null,
-                transLrc: result.translationText ?? null,
-                isPureMusic: result.isPureMusic,
-                lyrics: result.lyrics,
-                chorusRanges: result.chorusRanges || [],
-            };
+            // The own provider's lyric fetch must never kill the auto-match below: if it
+            // throws (an unconfigured backend, a refused endpoint), fall back to empty
+            // lyrics and let autoMatchBestLyric search the other sources instead (lx8 —
+            // this throw used to abort the whole function before the auto-match ran).
+            try {
+                const result = await omni.getLyrics(song, { userId });
+                return {
+                    mainLrc: result.mainText ?? null,
+                    yrcLrc: result.wordByWordText ?? null,
+                    transLrc: result.translationText ?? null,
+                    isPureMusic: result.isPureMusic,
+                    lyrics: result.lyrics,
+                    chorusRanges: result.chorusRanges || [],
+                };
+            } catch (error) {
+                console.warn('[OnlinePlayback] Own-provider lyrics failed, auto-match continues:', error);
+                return { mainLrc: null, yrcLrc: null, transLrc: null, isPureMusic: false, lyrics: null, chorusRanges: [] };
+            }
         })();
     const parsedLyrics = processed.lyrics;
 

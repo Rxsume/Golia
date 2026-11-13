@@ -507,6 +507,33 @@ describe('online QQ lyric candidate plumbing', () => {
     });
 });
 
+describe('own-provider lyric failure (lx8)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        songCacheMock.mockResolvedValue(null);
+        loadLyricsStateMock.mockResolvedValue(null);
+    });
+
+    it('lets auto-match run when the own provider lyric fetch throws', async () => {
+        // lx7: omni.getLyrics threw (NETEASE_API_BASE_MISSING / KUGOU_API_BASE_MISSING)
+        // outside any try/catch, so loadOnlineSongLyrics died before autoMatchBestLyric
+        // ran and the song played with no lyrics at all.
+        const lyrics = { lines: [{ startTime: 0, endTime: 1, fullText: 'line', words: [] }], isWordByWord: false };
+        lyricsMock.mockRejectedValueOnce(new Error('VITE_KUGOU_API_BASE is not configured'));
+        autoMatchMock.mockResolvedValue({ lyrics, source: 'qq', id: 'other' });
+        const onLyrics = vi.fn();
+        const onDone = vi.fn();
+
+        await loadOnlineSongLyrics(song, null, null, { isCurrent: () => true, onLyrics, onDone });
+
+        expect(onDone).toHaveBeenCalled();
+        expect(autoMatchMock).toHaveBeenCalled();
+        // The cross-source match replaces the missing own-provider lyrics.
+        expect(onLyrics).toHaveBeenCalledWith(lyrics);
+        expect(saveLyricsStateMock).toHaveBeenCalled();
+    });
+});
+
 describe('instrumental tracks, once auto-match has settled them', () => {
     beforeEach(() => {
         vi.clearAllMocks();

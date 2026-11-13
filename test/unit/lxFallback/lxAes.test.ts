@@ -2,7 +2,7 @@
 // AES-128 encrypt against the NIST vectors (FIPS-197 for ECB, SP 800-38A F.2.1 for CBC).
 
 import { describe, expect, it } from 'vitest';
-import { aesEncryptBytes, lxAesEncrypt } from '@/services/lxFallback/lxAes';
+import { aesDecryptBytes, aesEncryptBytes, lxAesEncrypt } from '@/services/lxFallback/lxAes';
 import { bytesToHex, hexToBytes } from '@/services/lxFallback/lxBytes';
 
 describe('lxAes', () => {
@@ -52,6 +52,27 @@ describe('lxAes', () => {
         expect(aesEncryptBytes(data, 'ecb', longKey, iv)).toEqual(
             aesEncryptBytes(data, 'ecb', hexToBytes('000102030405060708090a0b0c0d0e0f'), iv),
         );
+    });
+
+    it('decrypts one ECB block (FIPS-197)', () => {
+        const key = hexToBytes('000102030405060708090a0b0c0d0e0f');
+        const ciphertext = hexToBytes('69c4e0d86a7b0430d8cdb78070b4c55a');
+        const plaintext = aesDecryptBytes(ciphertext, 'ecb', key, new Uint8Array(16));
+        expect(bytesToHex(plaintext)).toBe('00112233445566778899aabbccddeeff');
+    });
+
+    it('decrypts what encrypt produced, padding and all', () => {
+        const key = hexToBytes('2b7e151628aed2a6abf7158809cf4f3c');
+        const iv = hexToBytes('000102030405060708090a0b0c0d0e0f');
+        const plaintext = hexToBytes('6bc1bee22e409f96e93d7e117393172aae2d8a571e03fb9c2350b72312f00367');
+        const ciphertext = aesEncryptBytes(plaintext, 'cbc', key, iv);
+        expect(aesDecryptBytes(ciphertext, 'cbc', key, iv)).toEqual(plaintext);
+        expect(aesDecryptBytes(ciphertext, 'ecb', key, iv)).not.toEqual(plaintext);
+    });
+
+    it('returns an empty buffer for a truncated input', () => {
+        const key = hexToBytes('000102030405060708090a0b0c0d0e0f');
+        expect(aesDecryptBytes(hexToBytes('00112233'), 'ecb', key, new Uint8Array(16)).length).toBe(0);
     });
 
     it('returns the ciphertext as an LX buffer dictionary', () => {

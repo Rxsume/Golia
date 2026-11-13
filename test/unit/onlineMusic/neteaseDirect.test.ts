@@ -99,4 +99,45 @@ describe('NetEase direct transport (no backend configured)', () => {
         const sent = request.mock.calls[0][0] as unknown as { headers: Record<string, string> };
         expect(sent.headers['User-Agent']).toBe('NeteaseMusic/9.1.65.240305144431(91652404314431);Dalvik/2.1.0 (Linux; U; Android 14; Pixel 7 Build/UQ1A.240205.004)');
     });
+
+    it('fetches lyrics straight from the platform (lx8)', async () => {
+        const request = nativeRequest({
+            'music.163.com/api/song/lyric': JSON.stringify({
+                code: 200,
+                lrc: { lyric: '[00:16.91]变色的生活任性的挑拨\n[00:20.00]下一句\n' },
+            }),
+        });
+        const fetchMock = vi.fn().mockRejectedValue(new Error('fetch must not be called'));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getLyric(108485);
+        expect(res.lrc?.lyric).toContain('变色的生活任性的挑拨');
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://music.163.com/api/song/lyric?id=108485&lv=-1&kv=-1&tv=-1',
+            method: 'GET',
+        }));
+        // No backend is configured, so the backend fetch is never touched.
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('still uses the backend lyric endpoint when one is configured (lx8)', async () => {
+        vi.stubEnv('VITE_NETEASE_API_BASE', 'https://netease.example.test');
+        storage.set('online_provider:netease:cookie', 'MUSIC_U=test-cookie');
+        const fetchMock = vi.fn().mockResolvedValue(Response.json({
+            code: 200,
+            lrc: { lyric: '[00:00.00]backend lyric\n' },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getLyric(108485);
+        expect(res.lrc?.lyric).toContain('backend lyric');
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('https://netease.example.test/lyric/new?id=108485'),
+            expect.anything(),
+        );
+    });
 });

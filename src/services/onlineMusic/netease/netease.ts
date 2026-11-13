@@ -9,7 +9,7 @@ import { asRecord } from '../../../utils/record';
 import { requestNativeHttp } from '../capacitorHttp';
 import QRCode from 'qrcode';
 import { weapiEncrypt } from './neteaseWeapi';
-import { eapiEncrypt } from './neteaseEapi';
+import { eapiDecrypt, eapiEncrypt } from './neteaseEapi';
 
 // The shapes the provider reads from these answers (the backend's answers have the same shape).
 interface NeteaseQrKeyResponse { code: number; data: { unikey: string } }
@@ -244,8 +244,7 @@ const requestNeteaseDirectJson = async (
     throw new OnlineProviderError('network', `NetEase direct request failed: ${response.status}`, 'netease', undefined, response.status);
   }
   try {
-    const parsed: unknown = JSON.parse(response.bodyText);
-    return parsed;
+    return parseNeteaseDirectBody(response.bodyText);
   } catch (error) {
     throw new OnlineProviderError('invalid-response', 'NetEase direct request returned an unreadable body', 'netease', error);
   }
@@ -287,35 +286,148 @@ const cookieStringOfDirectResponse = (headers: Record<string, string>): string =
     .join('; ');
 };
 
-// One eapi request: the encrypted POST to the platform's /eapi/ URL (the Android-app
-// flow), with the sign-in cookie where one is stored. The answer is the platform's
-// JSON body. The /eapi/ path is the api path with its leading /api/ stripped.
-const requestNeteaseEapi = async (path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
-  const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
-  const params = eapiEncrypt(path, payload);
-  const headers: Record<string, string> = {
-    'User-Agent': NETEASE_EAPI_USER_AGENT,
-    'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-  };
-  if (cookie) headers.Cookie = cookie;
-  const parsed = await requestNeteaseDirectJson(`${NETEASE_EAPI_BASE}/eapi/${path.replace(/^\/api\//, '')}`, {
-    method: 'POST',
-    headers,
-    body: new URLSearchParams({ params }).toString(),
-  });
-  return asRecord(parsed) ?? {};
+// Parse one direct answer body: plain JSON, with an AES-ECB hex fallback —
+// the earlier shell decrypted a hex body the same way it encrypts requests, and
+// a hex answer lx7 cannot read would surface as `invalid-response` on the QR
+// check. The fallback only runs when the body is not JSON at all (a JSON body
+// never looks like pure hex).
+const parseNeteaseDirectBody = (bodyText: string): unknown => {
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    const hex = bodyText.trim().replace(/\s+/g, '');
+    if (/^[0-9a-fA-F]+$/.test(hex) && hex.length % 2 === 0) {
+      try {
+        return JSON.parse(eapiDecrypt(hex));
+      } catch {
+        // Not a readable hex body either.
+      }
+    }
+    throw new Error('NetEase direct request returned an unreadable body');
+  }
 };
 
-// One direct eapi request that also keeps the answer's Set-Cookie header (the QR check's
-// login cookie arrives that way as well as in the body).
+// The Android-app device identity (lx8): the platform's risk control expects a
+// stable device on every eapi request. The earlier 2.2.4 shell sent this cookie
+// jar on every request (its `folia_inapp_netease_cookie` localStorage object,
+// filled from the defaults below and persisted); lx7 sent no Cookie at all on
+// a fresh sign-in, so each request looked like a brand-new anonymous device and
+// the QR confirmation was refused as "device environment abnormal". deviceId is
+// generated once and reused forever — a fresh one per request would be worse
+// than none. Only device-identity items live here: the sign-in cookie stays in
+// the `netease/cookie` slot and is written only on QR confirmation (803), so a
+// logout never leaves a stale sign-in behind in this jar.
+const NETEASE_DEVICE_COOKIE_DEFAULTS: Record<string, string> = {
+  os: 'android',
+  appver: '9.1.65',
+  osver: '14',
+  channel: 'netease',
+  resolution: '1920x1080',
+  mobilename: 'Pixel 7',
+};
+
+// The 32-hex device id: 16 random bytes, generated once, then reused forever
+// (the earlier shell's `Et(32)`).
+const generateNeteaseDeviceId = (): string => {
+  const bytes = new Uint8Array(16);
+  const cryptoRef = typeof globalThis.crypto !== 'undefined' ? globalThis.crypto : undefined;
+  if (cryptoRef && typeof cryptoRef.getRandomValues === 'function') {
+    cryptoRef.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+};
+
+// Read the persisted device jar, filling any missing item from the defaults
+// (and stamping buildver once, at first creation) and writing it back.
+const readNeteaseDeviceCookie = (): Record<string, string> => {
+  let stored: Record<string, unknown>;
+  try {
+    stored = asRecord(JSON.parse(readProviderSessionValue('netease', 'device', []) ?? '{}')) ?? {};
+  } catch {
+    stored = {};
+  }
+  const device: Record<string, string> = {};
+  for (const [key, value] of Object.entries(stored)) {
+    if (typeof value === 'string' && value) device[key] = value;
+  }
+  let changed = false;
+  for (const [key, value] of Object.entries(NETEASE_DEVICE_COOKIE_DEFAULTS)) {
+    if (!device[key]) { device[key] = value; changed = true; }
+  }
+  if (!device.deviceId) { device.deviceId = generateNeteaseDeviceId(); changed = true; }
+  if (!device.buildver) { device.buildver = String(Math.floor(Date.now() / 1000)); changed = true; }
+  if (changed) writeProviderSessionValue('netease', 'device', JSON.stringify(device));
+  return device;
+};
+
+const writeNeteaseDeviceCookie = (device: Record<string, string>): void => {
+  writeProviderSessionValue('netease', 'device', JSON.stringify(device));
+};
+
+// The device jar as a `k=v; k=v; ...` Cookie header value.
+const neteaseDeviceCookieString = (): string => {
+  const device = readNeteaseDeviceCookie();
+  return Object.entries(device).map(([key, value]) => `${key}=${value}`).join('; ');
+};
+
+// Merge one answer's Set-Cookie into the device jar. Only device-identity
+// items are kept here (the platform hands back NMTID on every eapi answer);
+// sign-in items (MUSIC_U, __csrf, ...) stay out — they live in the
+// `netease/cookie` slot, are written only on QR confirmation (803), and a
+// logout must not leave them behind in this jar. (The earlier shell merged
+// everything into its single jar; lx7 keeps the two slots apart on purpose.)
+const mergeNeteaseDeviceCookie = (cookieString: string): void => {
+  if (!cookieString) return;
+  const device = readNeteaseDeviceCookie();
+  let changed = false;
+  for (const entry of cookieString.split(';')) {
+    const trimmed = entry.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const name = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1).trim();
+    if (name.toLowerCase() !== 'nmtid' || !value) continue;
+    if (device.NMTID !== value) { device.NMTID = value; changed = true; }
+  }
+  if (changed) writeNeteaseDeviceCookie(device);
+};
+
+// The Cookie header of every eapi request: the device jar, plus the stored
+// sign-in cookie where one exists (its items win on a name clash).
+const eapiCookieHeader = (): string => {
+  const device = neteaseDeviceCookieString();
+  const login = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
+  if (!login) return device;
+  const merged = new Map<string, string>();
+  for (const entry of device.split(';')) {
+    const trimmed = entry.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq > 0) merged.set(trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim());
+  }
+  for (const entry of login.split(';')) {
+    const trimmed = entry.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq > 0) merged.set(trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim());
+  }
+  return [...merged.entries()].map(([key, value]) => `${key}=${value}`).join('; ');
+};
+
+// One eapi request: the encrypted POST to the platform's /eapi/ URL (the Android-app
+// flow), with the device Cookie always sent (see eapiCookieHeader). The answer's
+// Set-Cookie header is kept too: the QR check's login cookie arrives that way as
+// well as in the body, and every answer carries a fresh NMTID for the device jar.
+// The /eapi/ path is the api path with its leading /api/ stripped.
 const requestNeteaseEapiWithCookie = async (path: string, payload: Record<string, unknown>): Promise<{ body: Record<string, unknown>; cookie: string }> => {
-  const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
   const params = eapiEncrypt(path, payload);
   const headers: Record<string, string> = {
     'User-Agent': NETEASE_EAPI_USER_AGENT,
     'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+    // Always sent, even with no sign-in yet: the device jar is what the
+    // platform's risk control ties the request to (see eapiCookieHeader).
+    Cookie: eapiCookieHeader(),
   };
-  if (cookie) headers.Cookie = cookie;
   const response = await requestNativeHttp(`${NETEASE_EAPI_BASE}/eapi/${path.replace(/^\/api\//, '')}`, {
     method: 'POST',
     headers,
@@ -327,7 +439,7 @@ const requestNeteaseEapiWithCookie = async (path: string, payload: Record<string
   }
   let body: Record<string, unknown>;
   try {
-    body = asRecord(JSON.parse(response.bodyText)) ?? {};
+    body = asRecord(parseNeteaseDirectBody(response.bodyText)) ?? {};
   } catch (error) {
     throw new OnlineProviderError('invalid-response', 'NetEase direct request returned an unreadable body', 'netease', error);
   }
@@ -347,6 +459,19 @@ const requestNeteaseDirectCloudSearch = async (keywords: string, limit: number, 
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
+  return asRecord(parsed) ?? {};
+};
+
+// Direct lyric: the platform's own lyric endpoint answers anonymously, no cookie needed
+// (verified live 2026-11-14: id 108485, Always Online, returns code 200 with lrc.lyric,
+// 1354 chars). The shape matches what the backend's /lyric/new returns, so the provider
+// needs no change. Anonymous direct has no yrc (word-by-word); that can come from the
+// auto-match's other sources.
+const requestNeteaseDirectLyric = async (id: number): Promise<Record<string, unknown>> => {
+  const parsed = await requestNeteaseDirectJson(
+    `${NETEASE_DIRECT_BASE}/api/song/lyric?id=${id}&lv=-1&kv=-1&tv=-1`,
+    { method: 'GET' },
+  );
   return asRecord(parsed) ?? {};
 };
 
@@ -942,7 +1067,11 @@ export const neteaseApi = {
     }
     // eapi, not weapi: the platform refuses the web flow at the QR-check step with
     // code 8821 ("switch login method or upgrade"); the app flow is accepted.
-    const body = await requestNeteaseEapi('/api/login/qrcode/unikey', { type: 3 });
+    // The WithCookie variant, so the answer's NMTID lands in the device jar:
+    // the platform ties the key to the device that created it, and the QR
+    // confirmation is refused when the checking request looks like a new device.
+    const { body, cookie } = await requestNeteaseEapiWithCookie('/api/login/qrcode/unikey', { type: 3 });
+    mergeNeteaseDeviceCookie(cookie);
     const unikey = body.unikey;
     if (typeof unikey !== 'string' || !unikey) {
       throw new OnlineProviderError('invalid-response', 'NetEase QR key request returned no key', 'netease');
@@ -968,6 +1097,11 @@ export const neteaseApi = {
     }
     // eapi, not weapi: the web flow is refused here with code 8821 once scanned.
     const { body, cookie } = await requestNeteaseEapiWithCookie('/api/login/qrcode/client/login', { key, type: 3 });
+    // The answer's NMTID goes into the device jar on every poll (801 waiting /
+    // 802 scanned included), so the checking requests keep the same device
+    // identity as the request that created the key. The sign-in cookie itself
+    // is still only written by the provider, on confirmation (803).
+    mergeNeteaseDeviceCookie(cookie);
     // The login cookie arrives in the answer body (a string) and in Set-Cookie; the provider
     // keeps it only where it is a string, so hand it over as one either way.
     const bodyCookie = typeof body.cookie === 'string' && body.cookie
@@ -1182,11 +1316,15 @@ export const neteaseApi = {
       // (url null, code 404) falls through to the configured-backend path, which
       // throws the not-configured error and lets the LX fallback take over.
       try {
-        const direct = await requestNeteaseEapi('/api/song/enhance/player/url/v1', {
+        const { body: direct, cookie } = await requestNeteaseEapiWithCookie('/api/song/enhance/player/url/v1', {
           ids: JSON.stringify([id]),
           level,
           encodeType: 'flac',
         });
+        // The answer's NMTID goes into the device jar, same as the QR flow: the
+        // platform hands back a fresh NMTID on every eapi answer, and the jar must
+        // not go stale at the last QR poll once the user is signed in (lx8 review).
+        mergeNeteaseDeviceCookie(cookie);
         const first: unknown = Array.isArray(direct.data) ? direct.data[0] : undefined;
         const firstUrl = (first as { url?: unknown } | null | undefined)?.url;
         if (typeof firstUrl === 'string' && firstUrl) {
@@ -1200,6 +1338,9 @@ export const neteaseApi = {
   },
 
   getLyric: async (id: number) => {
+    if (!(await hasConfiguredApiBase())) {
+      return requestNeteaseDirectLyric(id);
+    }
     return fetchWithCreds(`/lyric/new?id=${id}`);
   },
 

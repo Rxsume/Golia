@@ -9,7 +9,7 @@
 // method or upgrade"); the app (eapi) flow is the one the platform accepts there.
 
 import md5 from 'blueimp-md5';
-import { aesEncryptBytes } from '../../lxFallback/lxAes';
+import { aesDecryptBytes, aesEncryptBytes } from '../../lxFallback/lxAes';
 
 const EAPI_KEY = 'e82ckenh8dichen8';
 
@@ -35,4 +35,18 @@ export const eapiEncrypt = (apiPath: string, payload: Record<string, unknown>): 
         new Uint8Array(16),
     );
     return bytesToHex(encrypted).toUpperCase();
+};
+
+/**
+ * Decrypt one eapi answer body. The platform usually answers eapi in plain JSON,
+ * but the earlier shell decrypted a hex body the same way it encrypts requests
+ * (AES-ECB, key `e82ckenh8dichen8`); a hex answer lx7 cannot read would surface
+ * as `invalid-response` on the QR check, so the reader falls back to this.
+ * `hexBody` is the hex string with whitespace already stripped.
+ */
+export const eapiDecrypt = (hexBody: string): string => {
+    const bytes = new Uint8Array(hexBody.length / 2);
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = parseInt(hexBody.slice(i * 2, i * 2 + 2), 16);
+    const decrypted = aesDecryptBytes(bytes, 'ecb', new TextEncoder().encode(EAPI_KEY), new Uint8Array(16));
+    return new TextDecoder().decode(decrypted);
 };

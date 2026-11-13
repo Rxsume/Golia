@@ -185,7 +185,6 @@ export function usePlaybackAudioBridge({
             } catch { /* audioSession unsupported */ }
             const AudioContextClass = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
             const ctx = new AudioContextClass();
-            audioContextRef.current = ctx;
             void applySavedAudioOutputToContext(ctx, useAudioSettingsStore.getState().audioOutputDeviceId);
 
             const analyser = ctx.createAnalyser();
@@ -210,10 +209,20 @@ export function usePlaybackAudioBridge({
             if (!decksConnected) {
                 console.warn('[AudioContext] Deck setup incomplete, automix will stay idle');
             }
+            // The context is the sentinel for "setup ran": only claim it once the graph is built
+            // and the fade node registered (lx8 — claiming it first meant a failure here left
+            // the fade/analyser dead forever, because the guard above never let setup retry).
+            // applyReplayGain below reads the ref, so this must land before it.
+            audioContextRef.current = ctx;
             applyReplayGain();
             syncOutputGain(getTargetPlaybackVolume(), 0);
+            // A fresh context starts suspended off a gesture; wake it now so the fade ramp and
+            // the analyser can run (resumePlayback wakes it again on its own path).
+            if (typeof ctx.resume === 'function') void ctx.resume().catch(() => {});
         } catch (error) {
             console.error('Audio Context Setup Failed:', error);
+            // Let the next play retry the setup instead of pinning the dead attempt.
+            audioContextRef.current = null;
         }
     }, [analyserRef, applyReplayGain, audioContextRef, audioRef, connectDecks, gainNodeRef, getTargetPlaybackVolume, heardEqualizerSettings, syncOutputGain]);
 

@@ -123,7 +123,7 @@ afterEach(() => {
 describe('pausePlayback', () => {
     it('reports PAUSED at once but only pauses the element after the fade', () => {
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
 
         expect(storeMock.setPlayerState).toHaveBeenCalledWith(PlayerState.PAUSED);
         expect(audio.pause).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ describe('pausePlayback', () => {
     it('pauses straight away when the fade cannot run (no Web Audio graph)', () => {
         registerPlaybackFadeGraph(null);
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
 
         expect(audio.pause).toHaveBeenCalledTimes(1);
         expect(storeMock.setPlayerState).toHaveBeenCalledWith(PlayerState.PAUSED);
@@ -146,7 +146,7 @@ describe('pausePlayback', () => {
     it('pauses straight away when the element is not playing', () => {
         audio.paused = true;
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
 
         expect(audio.pause).toHaveBeenCalledTimes(1);
         expect(playbackFade.isFadingOut()).toBe(false);
@@ -154,7 +154,7 @@ describe('pausePlayback', () => {
 
     it('does not let a pause for the old song land on the song that replaced it', () => {
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
 
         // Replaced by a path that did not go through playSong's cancel.
@@ -169,7 +169,7 @@ describe('pausePlayback', () => {
 
     it('is dropped when the track change cancels the fade', () => {
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
 
         playbackFade.cancel();
@@ -181,7 +181,7 @@ describe('pausePlayback', () => {
 
     it('flush on a track change pauses the old song at once instead of leaving it audible', () => {
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
 
         // playSong's entry, before the new song's source has loaded.
@@ -202,7 +202,7 @@ describe('pausePlayback', () => {
         isTransitionAudible.mockReturnValue(true);
         pauseDuringTransition.mockReturnValue(true);
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
 
         playbackFade.flush();
@@ -212,7 +212,7 @@ describe('pausePlayback', () => {
 
     it('a pause that finishes on its own is not marked, so its event is handled as a listener pause', () => {
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D + 0.02);
 
         expect(audio.pause).toHaveBeenCalledTimes(1);
@@ -224,7 +224,7 @@ describe('pausePlayback', () => {
         isTransitionAudible.mockReturnValue(true);
         pauseDuringTransition.mockReturnValue(true);
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
 
         // playSong(isAutomixAdvance) resolves and the app commits to the incoming song.
@@ -239,7 +239,7 @@ describe('pausePlayback', () => {
     it('still keeps the pause if the blend was audible at the press but has gone idle by the end', () => {
         isTransitionAudible.mockReturnValueOnce(true).mockReturnValue(false);
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
         storeMock.state.currentSong = { id: 2, sourceRef: { kind: 'local', mediaId: 'b' } };
         advance(D);
@@ -252,7 +252,7 @@ describe('pausePlayback', () => {
         isTransitionAudible.mockReturnValue(true);
         pauseDuringTransition.mockReturnValue(true);
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
 
         // The blend is left alone while the sound fades out ...
         expect(pauseDuringTransition).not.toHaveBeenCalled();
@@ -270,18 +270,88 @@ describe('pausePlayback', () => {
         isTransitionAudible.mockReturnValue(true);
         pauseDuringTransition.mockReturnValue(true);
         const { pausePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
 
         expect(playbackFade.isFadingOut()).toBe(true);
         advance(D + 0.02);
         expect(pauseDuringTransition).toHaveBeenCalledTimes(1);
+    });
+
+    it('wakes a suspended context before fading out on pause (lx8)', async () => {
+        graph.setState('suspended');
+        const { pausePlayback } = buildTransport();
+        await pausePlayback();
+
+        expect(graph.resume).toHaveBeenCalledTimes(1);
+        expect(storeMock.setPlayerState).toHaveBeenCalledWith(PlayerState.PAUSED);
+        expect(audio.pause).not.toHaveBeenCalled();
+
+        advance(D + 0.02);
+        expect(audio.pause).toHaveBeenCalledTimes(1);
+        advance(DRAIN_AND_RESTORE);
+        expect(graph.param.value).toBe(1);
+    });
+
+    it('pauses straight away when the context will not wake (lx8)', async () => {
+        graph.setState('suspended');
+        graph.resume.mockRejectedValueOnce(new Error('resume refused'));
+        const { pausePlayback } = buildTransport();
+        await pausePlayback();
+
+        expect(graph.resume).toHaveBeenCalledTimes(1);
+        expect(audio.pause).toHaveBeenCalledTimes(1);
+        expect(storeMock.setPlayerState).toHaveBeenCalledWith(PlayerState.PAUSED);
+        // No fade ran, so the gain was never dipped.
+        expect(graph.param.value).toBe(1);
+    });
+
+    it('does not hang the pause when resume never settles (lx8)', async () => {
+        graph.setState('suspended');
+        graph.resume.mockImplementationOnce(() => new Promise<void>(() => {}));
+        const { pausePlayback } = buildTransport();
+        const paused = pausePlayback();
+        await vi.advanceTimersByTimeAsync(600);
+        await paused;
+
+        expect(audio.pause).toHaveBeenCalledTimes(1);
+        expect(storeMock.setPlayerState).toHaveBeenCalledWith(PlayerState.PAUSED);
+        expect(graph.param.value).toBe(1);
+    });
+
+    it('abandons the pause when resume is pressed while the context is waking (lx8 review)', async () => {
+        graph.setState('suspended');
+        graph.resume.mockImplementationOnce(() => new Promise<void>(resolve => setTimeout(resolve, 100)));
+        const { pausePlayback, resumePlayback } = buildTransport();
+        const paused = pausePlayback();
+        // A resume pressed meanwhile wins: the pause is dropped, the song keeps playing.
+        void resumePlayback();
+        await vi.advanceTimersByTimeAsync(200);
+        await paused;
+
+        expect(audio.pause).not.toHaveBeenCalled();
+        expect(storeMock.setPlayerState).not.toHaveBeenCalledWith(PlayerState.PAUSED);
+        expect(graph.param.value).toBe(1);
+    });
+
+    it('does not stop the new song when the track changes while the context is waking (lx8 review)', async () => {
+        graph.setState('suspended');
+        graph.resume.mockImplementationOnce(() => new Promise<void>(() => {}));
+        const { pausePlayback } = buildTransport();
+        const paused = pausePlayback();
+        storeMock.state.currentSong = { id: 2, sourceRef: { kind: 'local', mediaId: 'b' } };
+        await vi.advanceTimersByTimeAsync(600);
+        await paused;
+
+        expect(audio.pause).not.toHaveBeenCalled();
+        expect(storeMock.setPlayerState).not.toHaveBeenCalledWith(PlayerState.PAUSED);
+        expect(graph.param.value).toBe(1);
     });
 });
 
 describe('resumePlayback', () => {
     it('cancels a pending pause instead of pressing play, with no step in the gain', async () => {
         const { pausePlayback, resumePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D * 0.6);
         const before = graph.param.value;
 
@@ -338,7 +408,7 @@ describe('resumePlayback', () => {
 
     it('takes the normal path when the element was paused by hand during the pending fade', async () => {
         const { pausePlayback, resumePlayback } = buildTransport();
-        pausePlayback();
+        void pausePlayback();
         advance(D / 2);
         // The export controller pauses the element directly.
         audio.paused = true;
@@ -357,11 +427,11 @@ describe('quick toggles', () => {
     it('pause, resume, pause, resume leaves the audio playing at full level', async () => {
         const { pausePlayback, resumePlayback } = buildTransport();
 
-        pausePlayback();
+        void pausePlayback();
         advance(0.05);
         await resumePlayback();
         advance(0.04);
-        pausePlayback();
+        void pausePlayback();
         advance(0.05);
         await resumePlayback();
         advance(1);
@@ -377,7 +447,7 @@ describe('quick toggles', () => {
 
         await resumePlayback();
         advance(D / 2);
-        pausePlayback();
+        void pausePlayback();
         advance(D + 0.05);
 
         expect(audio.pause).toHaveBeenCalledTimes(1);

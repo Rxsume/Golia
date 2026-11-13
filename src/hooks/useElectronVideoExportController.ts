@@ -35,7 +35,7 @@ type UseElectronVideoExportControllerOptions = {
     isElectronWindow: boolean;
     audioRef: RefObject<HTMLAudioElement | null>;
     navigateToPlayer: () => void;
-    pausePlayback: () => void;
+    pausePlayback: () => Promise<void>;
     resumePlayback: () => Promise<void>;
 };
 
@@ -174,7 +174,7 @@ export const useElectronVideoExportController = ({
             setIsPanelOpen(false);
             setIsPlayerChromeHidden(true);
             removeCursorGuard = installVideoExportCursorGuard();
-            pausePlayback();
+            void pausePlayback();
             audioElement.pause();
             audioElement.loop = false;
 

@@ -224,7 +224,7 @@ export function usePlaybackTransportController({
         }
     }, [activePlaybackContext, audioContextRef, audioRef, audioSrc, currentTime, duration, getSyntheticStageLyricsTime, getTargetPlaybackVolume, isNowPlayingStageActive, isTransitionAudible, recoverOnlinePlaybackSource, setPlayerState, setStatusMsg, setupAudioAnalyzer, shouldRefreshCurrentOnlineAudioSource, stageActiveEntryKind, stageLyricsClockRef, startExternalSong, syncOutputGain, syncStageLyricsClock, t]);
 
-    const pausePlayback = useCallback(() => {
+    const pausePlayback = useCallback(async () => {
         if (isNowPlayingStageActive) {
             return;
         }
@@ -290,10 +290,36 @@ export function usePlaybackTransportController({
 
         // Fade first, pause when the ramp is done. The whole of settlePause is deferred, so a
         // blend that is armed or running at that moment is still cancelled onto the right deck.
-        // The transport reads PAUSED straight away; the element follows ~200ms later. Nothing to
+        // The transport reads PAUSED straight away; the element follows ~350ms later. Nothing to
         // fade (already paused, feature off, no Web Audio) pauses directly as before.
         const transitionAtPress = Boolean(isTransitionAudible?.());
         const isSounding = Boolean(audioRef.current && !audioRef.current.paused) || transitionAtPress;
+        // Wake the context before the fade: a suspended context never advances the ramp, so
+        // fadeOutThen would silently fall back to a hard cut (lx8 — the resume path already
+        // did this, the pause path never did, which is why the toggle looked "on but dead" on
+        // iOS). Bounded: if the context will not wake, the pause still goes ahead after 500ms
+        // instead of hanging. A resume pressed meanwhile wins: the pause is then dropped
+        // (read through a call, so the check sees a resume that landed during the await).
+        if (isSounding && audioContextRef.current && audioContextRef.current.state !== 'running') {
+            try {
+                await Promise.race([
+                    audioContextRef.current.resume(),
+                    new Promise(resolve => setTimeout(resolve, 500)),
+                ]);
+            } catch {
+                // Still suspended: fadeOutThen falls back to a hard pause below.
+            }
+            const resumedMeanwhile = () => wantsPlayback.current;
+            if (resumedMeanwhile()) return;
+            // A track change during the wake-up wait means this pause was meant for
+            // the old song: the new one must keep playing (lx8 review — the
+            // fallthrough below has no song guard of its own, unlike
+            // settleDeferredPause). A blend in flight is the exception, same as
+            // there: currentSong moves to the next track by design, and the pause
+            // still has to cancel the blend.
+            const duringBlend = transitionAtPress || Boolean(isTransitionAudible?.());
+            if (!duringBlend && readCurrentSongKey() !== songKeyAtPress) return;
+        }
         // Backstop for song changes that bypass playSong's own flush: a different song by the time
         // the fade ends means the pause was meant for the old one, and the new one must keep playing.
         // Not applied during a blend: an armed blend has already asked for the next song, so
@@ -304,15 +330,25 @@ export function usePlaybackTransportController({
             if (!duringBlend && readCurrentSongKey() !== songKeyAtPress) return;
             settlePause(reason);
         };
-        if (isSounding && playbackFade.fadeOutThen(settleDeferredPause)) {
-            setPlayerState(PlayerState.PAUSED);
-            return;
-        }
+        try {
+            if (isSounding && playbackFade.fadeOutThen(settleDeferredPause)) {
+                setPlayerState(PlayerState.PAUSED);
+                return;
+            }
 
-        if (settlePause()) {
-            setPlayerState(PlayerState.PAUSED);
+            if (settlePause()) {
+                setPlayerState(PlayerState.PAUSED);
+            }
+        } catch {
+            // Never leave the pause half-done on the async path: fall back to a hard stop
+            // instead of an unhandled rejection (lx8 review).
+            try {
+                if (settlePause()) setPlayerState(PlayerState.PAUSED);
+            } catch {
+                // The element is gone; nothing left to pause.
+            }
         }
-    }, [activePlaybackContext, audioRef, audioSrc, currentTime, duration, getSyntheticStageLyricsTime, getTargetPlaybackVolume, isNowPlayingStageActive, isTransitionAudible, pauseDuringTransition, setPlayerState, stageActiveEntryKind, stageLyricsClockRef, syncOutputGain, syncStageLyricsClock]);
+    }, [activePlaybackContext, audioContextRef, audioRef, audioSrc, currentTime, duration, getSyntheticStageLyricsTime, getTargetPlaybackVolume, isNowPlayingStageActive, isTransitionAudible, pauseDuringTransition, setPlayerState, stageActiveEntryKind, stageLyricsClockRef, syncOutputGain, syncStageLyricsClock]);
 
     return {
         resumePlayback,

@@ -81,6 +81,7 @@ export const STORAGE_KEYS = [
     'provider:kugou:userid',
     'provider:netease:anonymous_cookie',
     'provider:netease:cookie',
+    'provider:netease:device',
     'provider:qq:cookie',
     'web:active_online_provider_id',
     'web:always_show_main_window_titlebar',
