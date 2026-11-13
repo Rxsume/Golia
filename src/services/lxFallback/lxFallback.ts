@@ -1,10 +1,12 @@
 // src/services/lxFallback/lxFallback.ts
-// The LX fallback: when a native provider cannot produce an audio URL, three built-in
-// LX scripts race in parallel for one, and the first URL wins. It is installed on the
-// omni audio hook, so it only runs after the native provider has already failed; the
-// native chain is never bypassed. A 'tx' song is never sent to the backends with its
-// numeric id (one backend answers that with another song's URL), so the songmid is
-// resolved first, from the song itself or, failing that, from a detail lookup.
+// The LX fallback: when a native provider cannot produce an audio URL, or only
+// produces a trial clip (`preview`), three built-in LX scripts race in parallel
+// for a full one, and the first URL wins. It is installed on the omni audio hook,
+// so it only runs after the native provider has already answered; a full URL from
+// the provider is never bypassed, and a trial is only kept when no script has a
+// full one. A 'tx' song is never sent to the backends with its numeric id (one
+// backend answers that with another song's URL), so the songmid is resolved first,
+// from the song itself or, failing that, from a detail lookup.
 
 import type { SongResult } from '../../types';
 import type { PlaybackSourceRef } from '../../types/onlineMusic';
@@ -170,21 +172,26 @@ export const resolveLxAudioUrl = async (song: SongResult): Promise<string | null
 };
 
 /**
- * Install the fallback on the omni audio hook. It only fills in when the native provider
- * produced no URL; anything it returns is recorded as a standard-quality hook URL.
- * Installs last at startup so no earlier hook can overwrite it.
+ * Install the fallback on the omni audio hook. It fills in when the native provider
+ * produced no URL, and when it produced only a trial clip (`preview`): a trial is
+ * not a playable full song, so the scripts race for a full URL first and the
+ * provider's trial is only kept when none of them has one. Anything it returns is
+ * recorded as a standard-quality hook URL. Installs last at startup so no earlier
+ * hook can overwrite it.
  */
 export const installLxFallbackHook = (): void => {
     installOmniResultHooks({
         audio: async (song, source) => {
-            if (source) return source;
+            // A full URL from the provider plays as-is; a trial clip (or no URL at
+            // all) goes to the scripts, and the trial is only kept when they fail.
+            if (source && !source.preview) return source;
             try {
                 const url = await resolveLxAudioUrl(song);
-                if (!url) return null;
+                if (!url) return source;
                 return { quality: 'standard', url, fetchedAt: Date.now(), preview: false };
             } catch (error) {
                 console.warn('[lxFallback] fallback failed', error);
-                return null;
+                return source;
             }
         },
     });

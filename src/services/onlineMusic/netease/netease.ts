@@ -209,6 +209,11 @@ const NETEASE_DIRECT_BASE = 'https://music.163.com';
 // The eapi host (the Android-app flow): QR sign-in goes here, not the /weapi/ host,
 // because the platform refuses the web flow at the QR-check step with code 8821.
 const NETEASE_EAPI_BASE = 'https://interfacepc.music.163.com';
+// The eapi User-Agent is the platform's own Android app, not a desktop browser:
+// the earlier 2.2.4 shell used exactly this string for its eapi requests, and the
+// platform refuses the QR check with code 8821 when an eapi request carries a
+// desktop UA (lx3 used the desktop UA here and was refused at scan-confirmation).
+const NETEASE_EAPI_USER_AGENT = 'NeteaseMusic/9.1.65.240305144431(91652404314431);Dalvik/2.1.0 (Linux; U; Android 14; Pixel 7 Build/UQ1A.240205.004)';
 const NETEASE_WEAPI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
 
 // Whether an API base is configured: false only where the web build has none. Any other failure
@@ -289,7 +294,7 @@ const requestNeteaseEapi = async (path: string, payload: Record<string, unknown>
   const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
   const params = eapiEncrypt(path, payload);
   const headers: Record<string, string> = {
-    'User-Agent': NETEASE_WEAPI_USER_AGENT,
+    'User-Agent': NETEASE_EAPI_USER_AGENT,
     'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
   };
   if (cookie) headers.Cookie = cookie;
@@ -307,7 +312,7 @@ const requestNeteaseEapiWithCookie = async (path: string, payload: Record<string
   const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
   const params = eapiEncrypt(path, payload);
   const headers: Record<string, string> = {
-    'User-Agent': NETEASE_WEAPI_USER_AGENT,
+    'User-Agent': NETEASE_EAPI_USER_AGENT,
     'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
   };
   if (cookie) headers.Cookie = cookie;

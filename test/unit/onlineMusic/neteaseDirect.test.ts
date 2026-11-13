@@ -67,10 +67,13 @@ describe('NetEase direct transport (no backend configured)', () => {
 
         const res = await neteaseApi.getQrKey();
         expect(res).toEqual({ code: 200, data: { unikey: 'direct-unikey' } });
-        const sent = request.mock.calls[0][0] as unknown as { data: string };
+        const sent = request.mock.calls[0][0] as unknown as { data: string; headers: Record<string, string> };
         // eapi sends only the hex `params` field (no weapi `encSecKey`).
         expect(sent.data).toContain('params=');
         expect(sent.data).not.toContain('encSecKey=');
+        // eapi is the Android-app flow: the platform refuses the QR check with 8821
+        // when the request carries a desktop UA (lx3), so it must be the app UA.
+        expect(sent.headers['User-Agent']).toBe('NeteaseMusic/9.1.65.240305144431(91652404314431);Dalvik/2.1.0 (Linux; U; Android 14; Pixel 7 Build/UQ1A.240205.004)');
     });
 
     it('renders the QR image locally', async () => {
@@ -92,5 +95,8 @@ describe('NetEase direct transport (no backend configured)', () => {
 
         const res = await neteaseApi.checkQr('direct-unikey');
         expect(res.code).toBe(801);
+        // The QR check is eapi too, so it carries the same Android-app UA.
+        const sent = request.mock.calls[0][0] as unknown as { headers: Record<string, string> };
+        expect(sent.headers['User-Agent']).toBe('NeteaseMusic/9.1.65.240305144431(91652404314431);Dalvik/2.1.0 (Linux; U; Android 14; Pixel 7 Build/UQ1A.240205.004)');
     });
 });
