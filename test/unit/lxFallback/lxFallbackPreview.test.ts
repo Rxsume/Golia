@@ -5,7 +5,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyOmniAudioHook, installOmniResultHooks } from '@/services/hostExtensionHooks';
 import { installLxFallbackHook } from '@/services/lxFallback/lxFallback';
-import type * as LxRuntimeModule from '@/services/lxFallback/lxRuntime';
 import type { UnifiedSong } from '@/types';
 import type { ProviderAudioSource } from '@/types/onlineMusic';
 
@@ -15,7 +14,7 @@ const { resolveMusicUrl } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/services/lxFallback/lxRuntime', async (importOriginal) => {
-    const orig = await importOriginal<LxRuntimeModule>();
+    const orig = (await importOriginal()) as Record<string, unknown>;
     return {
         ...orig,
         getLxRuntime: () => ({ resolveMusicUrl }),

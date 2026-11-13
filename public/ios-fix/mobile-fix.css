@@ -1,0 +1,647 @@
+/* Folia iOS 适配层：缩放控件样式 + 少量安全区/触控兜底 */
+/* 旋转过渡由 iOS 原生旋转动画 + scale.js 接管；不再整页淡黑/盖静态快照。
+   旋转期间先关掉最贵的毛玻璃，避免新旧尺寸交界处重建整屏 GPU 图层。 */
+html[data-ios-rotating] #root,
+html[data-ios-rotating] #root * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+#folia-scale-ui{position:fixed;left:8px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:2147483000;
+  display:flex;flex-direction:column;gap:4px;font:600 12px/1 -apple-system,system-ui,sans-serif;
+  background:rgba(24,24,27,.82);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:6px 8px;
+  backdrop-filter:blur(8px);color:#e4e4e7;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:.92}
+#folia-scale-ui .fs-row{display:flex;align-items:center;gap:6px}
+#folia-scale-ui button{all:unset;cursor:pointer;min-width:26px;height:26px;text-align:center;line-height:26px;
+  border-radius:8px;background:rgba(255,255,255,.1);color:#e4e4e7;font-size:14px}
+#folia-scale-ui button:active{background:rgba(255,255,255,.25)}
+#folia-scale-label{min-width:34px;text-align:center;font-variant-numeric:tabular-nums}
+#folia-scale-tab{position:fixed;left:8px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:2147483000;
+  padding:6px 10px;border-radius:10px;background:rgba(24,24,27,.82);color:#e4e4e7;font:600 12px -apple-system,system-ui,sans-serif;
+  border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(8px)}
+/* 触控兜底：把过小的可点区域撑到 28pt 以上 */
+@media (pointer: coarse){button,[role=button]{min-height:28px}}
+
+/* ══════════ 安全区方案（v5）：底部一律不让位，改用固定小抬升 ══════════
+   历史：v3 上下都让位 → 底部露黑边；v4 底部不让位但仍用 env(safe-area-inset-bottom) 抬控件
+        → 若设备上报的安全区异常大（或捕获到的是浏览器工具条高度），底部仍会出现大空白/黑边。
+   v5 原则：**底部完全不用 env()**，所有底部偏移改成固定的小值（按缩放折算），
+            这样无论设备上报多少安全区，都不可能再出现大黑边；如果某个控件因此被手势条压住，
+            再单独微调那一条规则即可。 */
+div.fixed.inset-0 {
+  /* 2026-10-17：原来把整个根容器往下推一个状态栏高度 → 竖屏顶部出现黑条（内容没铺满）。
+     改成 top:0 让背景延伸到状态栏下（沉浸式）；按钮各自仍用 env(safe-area-inset-top) 定位，
+     所以不会被刘海/状态栏压住，也不会重复下移。 */
+  top: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: auto !important;
+  width: auto !important;
+  transform: translateZ(0);
+}
+div.fixed.inset-0 > div.absolute.inset-0.z-10 {
+  top: 0 !important; bottom: 0 !important; left: 0 !important; right: 0 !important;
+}
+div.fixed.inset-0 > div.absolute.inset-0.z-0 {
+  top: calc(-1 * env(safe-area-inset-top, 0px) / var(--ios-scale, 1)) !important;
+  bottom: 0 !important;
+  left: 0 !important; right: 0 !important;
+}
+/* 底部浮动控件：固定抬升（按缩放折算，不用 env） */
+[data-ponder="player-bar"] {
+  margin-bottom: calc(20px / var(--ios-scale, 1)) !important;
+}
+#folia-scale-ui, #folia-scale-tab {
+  bottom: calc(110px / var(--ios-scale, 1)) !important;
+}
+/* 诊断浮层 */
+#folia-diag{position:fixed;left:6px;top:6px;z-index:2147483001;max-width:calc(100% - 12px);
+  font:600 11px/1.5 ui-monospace,Menlo,monospace;color:#fff;background:rgba(0,0,0,.86);
+  border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:6px 8px;white-space:pre-wrap;word-break:break-all}
+/* 右下角「墙面工具」：源码是 right/bottom 各 24px，在缩放下太贴边，额外内收 */
+.lattice-tools{
+  right: calc(24px + 24px / var(--ios-scale, 1)) !important;
+  bottom: calc(24px + 20px / var(--ios-scale, 1)) !important;
+}
+.lattice-tools-stack{ bottom: calc(88px + 20px / var(--ios-scale, 1)) !important; }
+
+
+/* ══════════ 点按区：一律按 44pt 反算（与缩放无关）══════════
+   这一层是"整体缩放"适配：源码里写死的 40 CSS px 控件，在 0.8 下 = 32pt，在 0.4 下只有 16pt。
+   Apple 的最小点按尺寸是 44pt，所以这里统一按 **44 / scale** 反算 CSS px，缩放值再变也不会失效。
+   位置同理：让按钮落在"应用顶部下方约 10pt"，避开状态栏与顶边手势区。 */
+button.top-6.left-6.h-10.w-10,
+button[aria-label="返回主页"],
+button[aria-label="回到播放页"],
+.lattice-back {
+  top: calc(10px / var(--ios-scale, 1)) !important;
+  left: calc(12px / var(--ios-scale, 1)) !important;
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+}
+button.top-6.left-6.h-10.w-10 > svg,
+button[aria-label="返回主页"] > svg,
+button[aria-label="回到播放页"] > svg,
+.lattice-back > svg {
+  width: calc(22px / var(--ios-scale, 1)) !important;
+  height: calc(22px / var(--ios-scale, 1)) !important;
+}
+
+/* 触屏设备：所有按钮的最低点按高度抬到 36pt（保守值，避免把密集工具条撑变形；
+   关键的返回类按钮已单独按 44pt 处理） */
+@media (pointer: coarse) {
+  button, [role=button] { min-height: calc(36px / var(--ios-scale, 1)); }
+}
+
+/* 适配层自己的缩放控件：同样按 44pt 反算，否则它自己也点不到 */
+#folia-scale-ui button {
+  min-width: calc(44px / var(--ios-scale, 1));
+  height: calc(44px / var(--ios-scale, 1));
+  line-height: calc(44px / var(--ios-scale, 1));
+  font-size: calc(18px / var(--ios-scale, 1));
+}
+#folia-scale-ui { font-size: calc(13px / var(--ios-scale, 1)); padding: calc(8px / var(--ios-scale, 1)) calc(10px / var(--ios-scale, 1)); }
+#folia-scale-label { min-width: calc(46px / var(--ios-scale, 1)); }
+#folia-scale-tab { font-size: calc(13px / var(--ios-scale, 1)); padding: calc(8px / var(--ios-scale, 1)) calc(12px / var(--ios-scale, 1)); }
+
+/* ══════════ 2026-10-17：横屏（30% 缩放）按钮尺寸适配 ══════════
+   横屏时视口约 2913 CSS px（屏高/0.3），源码里 40px 的按钮只有 12pt 的物理大小，点不到也看不清。
+   这里按物理尺寸反算：CSS px = 目标 pt / scale，所以换任何缩放比例都成立。
+   - 通用按钮/可点区域：≥40pt
+   - 返回按钮、右下角工具条：≥44pt（Apple 最小点按尺寸）
+   - 图标跟着放大到 22pt，避免"按钮大了图标还是个小点"
+   只作用于横屏，竖屏（90%）保持原有观感。 */
+/* ══════════ 全屏歌词页的返回按钮：尺寸与安全区 ══════════
+   播放页返回键的显隐由 VisualizerShell 的 isPlayerChromeHidden 控制（沉浸模式会连它一起收起）；
+   这里只统一 44pt 尺寸和左上角安全区，不再用 opacity:1 钉死它。 */
+/* 三个界面的返回键都以屏幕为基准；留 absolute 会各自相对父容器，落点必然不同。 */
+.ios-back-button {
+  position: fixed !important;
+}
+button.top-6.left-6.h-10.w-10,
+.lattice-back,
+button.top-5.left-6.w-10.h-10 {
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 12px / var(--ios-scale, 1)) !important;
+  left: calc(env(safe-area-inset-left, 0px) / var(--ios-scale, 1) + 14px / var(--ios-scale, 1)) !important;
+}
+/* 播放页返回键的显隐归 VisualizerShell 的 isPlayerChromeHidden 管；这里若再写
+   opacity:1/pointer-events:auto 就会把沉浸模式里的返回键钉死。
+   只有墙面/网格的返回键需要强制可点。 */
+.lattice-back,
+button.top-5.left-6.w-10.h-10 {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
+}
+button.top-6.left-6.h-10.w-10 > svg,
+.lattice-back > svg,
+button.top-5.left-6.w-10.h-10 > svg {
+  width: calc(22px / var(--ios-scale, 1)) !important;
+  height: calc(22px / var(--ios-scale, 1)) !important;
+}
+
+/* ══════════ 右下角工具按钮：全屏歌词页与主界面同位置、同层级 ══════════
+   全屏歌词页里这颗按钮挂在 WallToolsDock（absolute inset-0 z-10 pointer-events:none）里，
+   会被播放页的叠加层盖住/点不到。这里把 dock 固定到视口并提高层级，
+   按钮本身按与主界面完全相同的规则定位（安全区 + 16pt、44pt），并强制可点。 */
+[data-wall-tools-dock] {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  /* 播放条的整宽命中层是 z-60；dock 必须再高一层，按钮才不会被它的透明命中区挡住。 */
+  z-index: 70 !important;
+  pointer-events: none !important;
+}
+[data-wall-tools-dock] .lattice-tools,
+.lattice-tools {
+  /* 2026-10-18：以屏幕为基准，并与缩短后的底部胶囊右端对齐（右侧 40pt）。
+     之前固定在右侧 16/20pt，胶囊缩短后会明显偏右。 */
+  position: fixed !important;
+  right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 40px / var(--ios-scale, 1)) !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ios-scale, 1) + 18px / var(--ios-scale, 1)) !important;
+  z-index: 61 !important;
+  pointer-events: auto !important;
+}
+
+/* ══════════ 主界面右下角工具按钮：横竖屏都按 44pt 圆形 ══════════
+   .lattice-tools 外层虽然是 44/scale，里面 SlideActionButton 的 button 仍是 48px；
+   横屏的全局 min-height（32/scale）会把它拉成 48×80 的椭圆。这里把 wrapper 和 button 一起按 44pt 反算。 */
+.lattice-tools > div.relative {
+  /* 不保留 SlideActionButton 的 translate-x-1/2：在 iOS 的边缘手势区里，
+     半颗按钮被平移到父盒外会让点按落在 parent 之外，表现就是「按钮看得见但点不动」。
+     尺寸仍是 44pt 圆形，按钮完整留在父盒内；播放页的面板按钮保持独立定位。 */
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  transform: none !important;
+  translate: none !important;
+}
+.lattice-tools > div.relative > button {
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+}
+.lattice-tools > div.relative > button > svg {
+  width: calc(20px / var(--ios-scale, 1)) !important;
+  height: calc(20px / var(--ios-scale, 1)) !important;
+}
+/* 按钮变大后，面板/队列浮岛的下边距跟着抬高，避免压住按钮。 */
+.lattice-tools-stack {
+  bottom: calc(44px / var(--ios-scale, 1) + 16px) !important;
+}
+
+/* 全屏歌词页面板：固定在按钮正上方，右缘与按钮右缘对齐，底部留 16px 间距。
+   不能只加 margin：面板容器和按钮的 bottom 基准不同，横屏会压住按钮。 */
+[data-testid="unified-panel-surface"] {
+  position: fixed !important;
+  right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 40px / var(--ios-scale, 1) - 14px) !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ios-scale, 1) + 18px / var(--ios-scale, 1) + 44px / var(--ios-scale, 1) + 16px) !important;
+  margin: 0 !important;
+}
+
+/* 主界面右下角工具按钮弹出的面板：整体稍微放大 12%，锚点保持右下角。 */
+.lattice-tools-panel {
+  scale: 1.12 !important;
+  transform-origin: 100% 100% !important;
+}
+
+/* ══════════ 思索入口 / 退出按钮：避开灵动岛，保证 44pt 可点 ══════════
+   两者原本都是 fixed/absolute top-5 right-5（20px），在竖屏正好落进灵动岛/状态栏，
+   打开教程后退出按钮点不到。这里按安全区 + 12pt 定位，并按 44pt 物理尺寸反算。 */
+[data-testid="page-ponder-touch-button"] {
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 12px / var(--ios-scale, 1)) !important;
+  right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 14px / var(--ios-scale, 1)) !important;
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  z-index: 190 !important;
+}
+[data-testid="page-ponder-touch-button"] > svg {
+  width: calc(20px / var(--ios-scale, 1)) !important;
+  height: calc(20px / var(--ios-scale, 1)) !important;
+}
+[data-testid="ponder-exit"] {
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 12px / var(--ios-scale, 1)) !important;
+  right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 14px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  z-index: 60 !important;
+  pointer-events: auto !important;
+}
+[data-testid="ponder-exit"] > svg {
+  width: calc(16px / var(--ios-scale, 1)) !important;
+  height: calc(16px / var(--ios-scale, 1)) !important;
+}
+/* 教程标题栏同样下移，避免标题文字被灵动岛压住。 */
+[data-testid="ponder-stage"] .pointer-events-none.absolute.top-0.left-0.right-0 {
+  padding-top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 20px / var(--ios-scale, 1)) !important;
+}
+
+/* ══════════ 全屏歌词页右下角的面板开关：与主页工具按钮同尺寸/同位置 ══════════
+   面板开关的容器是 fixed right-0 + pr-4（md 下 pr-8）。
+   按钮按 44pt 物理尺寸反算，横竖屏都是圆形；位置以主页 .lattice-tools 为基准右移 14px。 */
+[data-testid="panel-toggle"] {
+  /* 与主页 .lattice-tools 同一套定位：右侧 40pt、底部 18pt，再右移 14px。
+     容器内有 pr-4（md 下 pr-8）；触屏收起时按钮还有 translate-x-1/2（24px）。
+     right = 40/scale + 40px/scale - 14px - 16px + 24px。 */
+  right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 40px / var(--ios-scale, 1) - 14px - 16px) !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ios-scale, 1) + 18px / var(--ios-scale, 1)) !important;
+}
+@media (min-width: 768px) {
+  [data-testid="panel-toggle"] {
+    /* 触屏下按钮仍带 translate-x-1/2（24px，按 48px 原 wrapper 算），内边距是 pr-8（32px）。 */
+    right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 40px / var(--ios-scale, 1) - 14px - 32px) !important;
+  }
+}
+
+/* 横屏 30%/40% 缩放下源码的 48px 只有 19pt，且全局 min-height 会把它拉成椭圆。
+   这里按 44pt 物理尺寸反算，宽高/最小宽高完全一致 → 圆形；图标同步 20pt。 */
+[data-testid="panel-toggle"] > div.relative {
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  transform: none !important;
+  translate: none !important;
+}
+[data-testid="panel-toggle"] button {
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+}
+[data-testid="panel-toggle"] button > svg {
+  width: calc(20px / var(--ios-scale, 1)) !important;
+  height: calc(20px / var(--ios-scale, 1)) !important;
+}
+
+/* ══════════ 底部播放条：保证可点（否则收不起来，永远停在展开态）══════════
+   主界面那条是"收起态胶囊"（240×62），全屏歌词页是同一组件的"展开态"（415×137）。
+   歌词页里点击被上层挡住 → 收了也弹回、或干脆没反应，于是两边看起来大小不一致。
+   这里把播放条及其容器提到最上层并强制可点。 */
+[data-ponder="player-bar"] {
+  pointer-events: auto !important;
+}
+
+/* ══════════ 中间竖排书脊（歌单 / 电台 / 专辑 / 本地）避让灵动岛 ══════════
+   根容器改成 top:0（沉浸式）后，这条 `height:100%` 的竖列从屏幕最顶开始，
+   内容只在自身上边留 22px → 顶部按钮被灵动岛/刘海压住。
+   这里在原有的 22px（紧凑档 16px）之上，再补一个安全区高度。 */
+.bravais-seam-home {
+  padding-top: calc(22px / var(--ios-scale, 1) + env(safe-area-inset-top, 0px) / var(--ios-scale, 1)) !important;
+}
+.bravais-seam-home.is-compact {
+  padding-top: calc(16px / var(--ios-scale, 1) + env(safe-area-inset-top, 0px) / var(--ios-scale, 1)) !important;
+}
+
+/* 非首页书脊（集合 / 歌手 / 面板 / 表单 / 搜索 / 登录）：内容也要整体让出灵动岛。
+   首页已经由 .bravais-seam-home 自己补了安全区，这里排除 home/home-spine，避免重复。 */
+.bravais-seam:not([data-bravais-seam="home"]):not([data-bravais-seam="home-spine"]) .bravais-seam-body {
+  padding-top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1)) !important;
+}
+
+/* ══════════ 首页竖排功能栏（歌单 / 电台 / 专辑 / 本地） ══════════
+   实测：按钮只有 22 CSS px 宽（≈20pt），手指很难点中。
+   加宽到 36pt 并保证最小高度，横向位置保持原样（向右扩，不挤占左侧内容）。 */
+.bravais-seam-home-tab {
+  min-width: calc(36px / var(--ios-scale, 1)) !important;
+  min-height: calc(40px / var(--ios-scale, 1)) !important;
+  padding-left: calc(6px / var(--ios-scale, 1)) !important;
+  padding-right: calc(6px / var(--ios-scale, 1)) !important;
+  border-radius: calc(10px / var(--ios-scale, 1)) !important;
+}
+
+/* ══════════ 底部进度条：全界面、横竖屏统一放大 ══════════
+   源码轨道 2~6px（歌词页只有 2px）、圆点 12px、热区 36px。
+   按物理尺寸反算：轨道 8pt、圆点 20pt、热区 40pt、时间读数 12pt。只动进度条本身。 */
+[data-folium-part="progress.track"] {
+  height: calc(8px / var(--ios-scale, 1)) !important;
+  min-height: calc(8px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+}
+[data-folium-part="progress.fill"] { border-radius: 999px !important; }
+[data-folium-part="progress.thumb"] {
+  width: calc(20px / var(--ios-scale, 1)) !important;
+  height: calc(20px / var(--ios-scale, 1)) !important;
+}
+[data-folium-part="progress.time"] {
+  font-size: calc(12px / var(--ios-scale, 1)) !important;
+  width: calc(46px / var(--ios-scale, 1)) !important;
+}
+[data-folium-part="progress.root"] input[type=range] {
+  height: calc(40px / var(--ios-scale, 1)) !important;
+}
+
+/* ══════════ 右下角工具按钮：全方向让出安全区 ══════════
+   之前这条只在横屏媒体查询里，全屏歌词页（悬挂 dock 里的 .lattice-tools）在竖屏时不生效，
+   按钮贴着底部手势条。这里改为横竖屏都生效，尺寸统一 44pt。 */
+.lattice-tools {
+  /* 2026-10-18：与缩短后的底部胶囊右端对齐（右侧 40pt / 底部 18pt）。
+     用 fixed 相对屏幕定位（与返回键同一做法）：若留在各自的父容器里，同一个偏移会因容器不同而落点不同。 */
+  position: fixed !important;
+  right: calc(env(safe-area-inset-right, 0px) / var(--ios-scale, 1) + 40px / var(--ios-scale, 1)) !important;
+  bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ios-scale, 1) + 18px / var(--ios-scale, 1)) !important;
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+}
+.lattice-tools > svg {
+  width: calc(22px / var(--ios-scale, 1)) !important;
+  height: calc(22px / var(--ios-scale, 1)) !important;
+}
+
+@media (orientation: landscape) {
+  /* 横屏底部播放胶囊：源码按 40% 缩放后只剩约 123pt 宽、20pt 高，太小。
+     这里按 58% 屏宽、44pt 高反算，时间/进度条同步放大；竖屏不受影响。 */
+  .ios-player-bar-collapsed {
+    max-width: calc(100vw - 120px) !important;
+  }
+  [data-ponder="player-bar"]:not(.p-3) {
+    width: 45vw !important;
+    min-height: calc(44px / var(--ios-scale, 1)) !important;
+    padding-top: calc(8px / var(--ios-scale, 1)) !important;
+    padding-bottom: calc(8px / var(--ios-scale, 1)) !important;
+    padding-left: calc(18px / var(--ios-scale, 1)) !important;
+    padding-right: calc(18px / var(--ios-scale, 1)) !important;
+    border-radius: 999px !important;
+  }
+  [data-ponder="player-bar"]:not(.p-3) > div > div.h-8 {
+    height: calc(28px / var(--ios-scale, 1)) !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+  [data-ponder="player-bar"]:not(.p-3) [data-folium-part="progress.time"] {
+    font-size: calc(13px / var(--ios-scale, 1)) !important;
+    width: calc(50px / var(--ios-scale, 1)) !important;
+  }
+  [data-ponder="player-bar"]:not(.p-3) [data-folium-part="progress.track"] {
+    height: calc(10px / var(--ios-scale, 1)) !important;
+    min-height: calc(10px / var(--ios-scale, 1)) !important;
+  }
+  [data-ponder="player-bar"]:not(.p-3) [data-folium-part="progress.root"] input[type=range] {
+    height: calc(44px / var(--ios-scale, 1)) !important;
+  }
+  /* 2026-10-17：布局**以电脑端 Folia 为准** —— 不再对具体控件改位置/尺寸。
+     这里只保留两件事：
+       ① 安全区（刘海侧 62pt / 底部 20pt）：贴边的固定按钮让出安全区；
+       ② 最小点按尺寸：横屏 30% 下源码 40px 的按钮只有 12pt，统一抬到 32pt（不影响布局流）。 */
+  .lattice-back,
+  button.top-6.left-6.h-10.w-10,
+  button[aria-label="返回主页"],
+  button[aria-label="回到播放页"] {
+    top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 12px / var(--ios-scale, 1)) !important;
+    left: calc(env(safe-area-inset-left, 0px) / var(--ios-scale, 1) + 14px / var(--ios-scale, 1)) !important;
+  }
+  button, [role=button] {
+    min-height: calc(32px / var(--ios-scale, 1));
+  }
+  /* 横屏 30% 下「字体 / 字号 / 字重」预设按钮：源码 text-sm + px-3 py-2 只有约 9pt 高。
+     按 44pt 点按区、16pt 字体反算，缩放比例变化时仍然成立；竖屏保持原样。 */
+  .folia-font-presets button {
+    min-height: calc(44px / var(--ios-scale, 1)) !important;
+    padding: calc(8px / var(--ios-scale, 1)) calc(16px / var(--ios-scale, 1)) !important;
+    font-size: calc(16px / var(--ios-scale, 1)) !important;
+    line-height: 1.2 !important;
+  }
+  /* 横屏主界面右下角工具按钮：52pt，比竖屏的 44pt 大一圈；外层同步放大，
+     否则固定尺寸的父盒又会把按钮边缘裁到命中区外。 */
+  .lattice-tools,
+  .lattice-tools > div.relative,
+  .lattice-tools > div.relative > button {
+    width: calc(52px / var(--ios-scale, 1)) !important;
+    height: calc(52px / var(--ios-scale, 1)) !important;
+    min-width: calc(52px / var(--ios-scale, 1)) !important;
+    min-height: calc(52px / var(--ios-scale, 1)) !important;
+  }
+  .lattice-tools > div.relative > button > svg {
+    width: calc(24px / var(--ios-scale, 1)) !important;
+    height: calc(24px / var(--ios-scale, 1)) !important;
+  }
+  .lattice-tools-stack {
+    bottom: calc(52px / var(--ios-scale, 1) + 16px) !important;
+  }
+}
+
+
+/* ══════════ iPadOS 适配（2026-10-18）══════════
+   目标：默认 90%，可在 45%~90% 之间调整；横屏优先。
+   缩放控件的尺寸全部按 1/scale 反算，缩到 45% 时它仍然保持可点、可读。 */
+html[data-ios-ipad="1"] #folia-scale-tab {
+  left: calc(8px / var(--ios-scale, 1)) !important;
+  top: 50% !important;
+  bottom: auto !important;
+  transform: translateY(-50%) !important;
+  z-index: 90 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+  opacity: .78 !important;
+  backdrop-filter: blur(10px);
+}
+html[data-ios-ipad="1"] #folia-scale-ui {
+  left: calc(8px / var(--ios-scale, 1)) !important;
+  top: 50% !important;
+  bottom: auto !important;
+  transform: translateY(-50%) !important;
+  z-index: 90 !important;
+  width: calc(210px / var(--ios-scale, 1)) !important;
+  max-width: calc(100vw - 24px) !important;
+  padding: calc(10px / var(--ios-scale, 1)) !important;
+  gap: calc(6px / var(--ios-scale, 1)) !important;
+  border-radius: calc(16px / var(--ios-scale, 1)) !important;
+  font-size: calc(13px / var(--ios-scale, 1)) !important;
+  opacity: 1 !important;
+  backdrop-filter: blur(12px);
+}
+html[data-ios-ipad="1"] #folia-scale-ui .fs-row {
+  gap: calc(5px / var(--ios-scale, 1)) !important;
+}
+html[data-ios-ipad="1"] #folia-scale-ui .fs-presets {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  gap: calc(4px / var(--ios-scale, 1)) !important;
+}
+html[data-ios-ipad="1"] #folia-scale-ui .fs-presets button {
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: 0 !important;
+  line-height: calc(44px / var(--ios-scale, 1)) !important;
+  font-size: calc(11px / var(--ios-scale, 1)) !important;
+  border-radius: calc(8px / var(--ios-scale, 1)) !important;
+}
+/* 「回到播放页」是首页在播放时出现的另一颗返回键（aria-label 不同于播放页的「返回主页」）。
+   它原来落在 y=4 CSS，iPad 状态栏下会压到最顶边；这里统一到 12pt + 安全区。 */
+html[data-ios-ipad="1"] button[aria-label="回到播放页"] {
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 12px / var(--ios-scale, 1)) !important;
+  left: calc(env(safe-area-inset-left, 0px) / var(--ios-scale, 1) + 14px / var(--ios-scale, 1)) !important;
+  width: calc(44px / var(--ios-scale, 1)) !important;
+  height: calc(44px / var(--ios-scale, 1)) !important;
+  min-width: calc(44px / var(--ios-scale, 1)) !important;
+  min-height: calc(44px / var(--ios-scale, 1)) !important;
+  border-radius: 999px !important;
+}
+/* iPad 竖屏时左下角「正在播放」卡片会与居中的播放胶囊同高；抬到胶囊上方，横屏保持原位。 */
+@media (orientation: portrait) and (min-width: 900px) {
+  html[data-ios-ipad="1"] div.pointer-events-none.fixed.left-6.z-40 {
+    bottom: calc(124px / var(--ios-scale, 1)) !important;
+  }
+}
+
+/* 根容器的 translateZ(0) 会建立 fixed 包含块：页面滚动后，「回到播放页」等 fixed 按钮会跟着偏移。
+   iPad 上取消这一层 transform，让 fixed 元素真正相对屏幕定位。 */
+html[data-ios-ipad="1"] #root > div.fixed.inset-0 {
+  transform: none !important;
+}
+
+/* iPad 右下角「墙面工具」：不再按横屏手机规则放大。使用源码原生 40px，
+   90% 下视觉约 36pt；播放页的 [data-testid="panel-toggle"] 保持 44pt。 */
+html[data-ios-ipad="1"] .lattice-tools,
+html[data-ios-ipad="1"] .lattice-tools > div.relative,
+html[data-ios-ipad="1"] .lattice-tools > div.relative > button {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
+}
+html[data-ios-ipad="1"] .lattice-tools > div.relative > button > svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+html[data-ios-ipad="1"] .lattice-tools-stack {
+  bottom: calc(40px + 16px) !important;
+}
+
+/* 2026-10-19：iPad 不常驻显示「缩放 90%」浮字；左侧边缘中部保留一块透明长按热区。
+   默认 90%，长按约 0.6 秒打开缩放面板；面板关闭后热区仍在，不占视觉。 */
+html[data-ios-ipad="1"] #folia-scale-tab {
+  display: none !important;
+}
+html[data-ios-ipad="1"] #folia-scale-hotspot {
+  position: fixed !important;
+  left: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: calc(28px / var(--ios-scale, 1)) !important;
+  height: calc(96px / var(--ios-scale, 1)) !important;
+  z-index: 89 !important;
+  background: transparent !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ══════════ 2026-10-19：书库隐藏后的顶部恢复按钮（同步 v5 的「书库」按钮） ══════════
+   只在书脊隐藏态渲染：.bravais-seam-tab[data-bravais-seam-tab="hidden"]；
+   书库打开时 data 属性不是 hidden，按钮 display:none。 */
+.bravais-seam-tab {
+  display: none !important;
+}
+@keyframes folia-library-tab-in {
+  from { opacity: 0; transform: translate(-50%, -100%); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.bravais-seam-tab[data-bravais-seam-tab="hidden"] {
+  display: inline-flex !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: 80 !important;
+  align-items: center;
+  justify-content: center;
+  max-height: none !important;
+  min-height: 40px !important;
+  padding: 8px 20px !important;
+  border-radius: 0 0 12px 12px !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  line-height: 1.2 !important;
+  letter-spacing: 0.12em !important;
+  writing-mode: horizontal-tb !important;
+  transform: translate(-50%, 0) !important;
+  animation: folia-library-tab-in 180ms cubic-bezier(.2, .7, .25, 1) !important;
+  touch-action: manipulation;
+}
+.bravais-seam-tab[data-bravais-seam-tab="hidden"]:active {
+  transform: translate(-50%, 1px) scale(0.98) !important;
+}
+
+/* iPad：去掉横屏书库页签 / 登录入口的额外放大，使用源码原生尺寸。 */
+@media (orientation: landscape) {
+  html[data-ios-ipad="1"] .bravais-seam-home-tab {
+    min-width: 0 !important;
+    min-height: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    border-radius: inherit !important;
+  }
+  html[data-ios-ipad="1"] .bravais-account-entry {
+    min-height: 0 !important;
+  }
+}
+
+/* ══════════ 2026-11-13：首页顶部搜索框 + 歌单 tab 下移、搜索框缩短 ══════════
+   用户反馈（截图）：右上角搜索框与下面 歌单/电台/专辑/本地 tab 整体往下一点；
+   搜索框长度缩短约 20–25%（重点是长度），高度略收。
+   定位：首页顶栏在 bootstrap.js 的 grid-page（data-ponder-page-scope="grid-page"），
+   顶栏 grid 为 `grid grid-cols-2 md:grid-cols-3 ... p-4 md:p-8`；
+   搜索框是第三格里的 form（`relative w-full md:w-56 focus-within:md:w-72`），
+   输入框本身是 `rounded-full py-2 pl-10 pr-4 text-sm`；tab pill 是第二格。
+   做法：只在这一层（ios-fix 适配层）加覆盖，不动上游 JS/CSS。
+   - 顶栏 grid 整体 margin-top 下移 10pt（物理尺寸，按 --ios-scale 反算，横竖屏一致），
+     搜索框与 tab pill 同在 grid 内，一起下移。
+   - 搜索框 form 窄到原来的约 78%（短约 22%）：手机（<768px）按格子宽度的 78%，
+     靠父格 flex justify-end 保持贴右；桌面断点（≥768px）由 w-56 224px → 176px、
+     聚焦时 w-72 288px → 224px。
+   - 输入框上下内边距 8px → 6px，高度略收（约 36px → 32px），圆角仍是满圆。 */
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 {
+  margin-top: calc(10px / var(--ios-scale, 1)) !important;
+}
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+  width: 78% !important;
+}
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form input {
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+@media (min-width: 768px) {
+  [data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+    width: 176px !important;
+  }
+  [data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form:focus-within {
+    width: 224px !important;
+  }
+}
+
+/* ══════════ 2026-11-13 lx5：播放页返回箭头上移、首页搜索框右移+上移 ══════════
+   用户反馈（两张截图）：图1 播放页左上角返回箭头往上一点；图2 首页右上角搜索框往右一点、往顶部一点
+   （搜索框现在被灵动岛挡了一部分，往上、往右移让它离灵动岛远一点、更贴近顶边和右缘）。
+   幅度：用户没给精确数，先按约 8pt 做，真机看了可再调（改下面 calc 里的 px 数即可）。
+   做法：只在这一层（ios-fix 适配层）加覆盖，不动上游 JS/CSS；只动位置，不改尺寸、颜色、功能。
+   - 返回箭头：播放页返回键是 `button.top-6.left-6.h-10.w-10`（usePlayerChrome，aria-label="返回主页"），
+     本文件前面的规则把它钉在 safe-area + 12px。这里只针对这一颗按钮（不碰 .lattice-back 与
+     button.top-5.left-6.w-10.h-10），把 12px → 4px，即往上移 8pt。本条规则放在文件末尾，
+     与前面同等特异度的规则相比后来者胜，横竖屏都生效。
+   - 首页搜索框：沿用上面 2026-11-13 那节的选择器（grid-page 顶栏第三格里的 form）。
+     用 transform 做纯位置平移，不影响布局与 focus-within 的宽度变化：向右 8pt、向上 8pt。
+     form 自带 transition-all，但 transform 值恒定，初次渲染无动画；放大镜图标在 form 内，
+     跟着 form 一起移动。 */
+button.top-6.left-6.h-10.w-10 {
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 4px / var(--ios-scale, 1)) !important;
+}
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+  transform: translate(calc(8px / var(--ios-scale, 1)), calc(-8px / var(--ios-scale, 1))) !important;
+}
+
