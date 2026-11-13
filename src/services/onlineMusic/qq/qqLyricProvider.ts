@@ -13,6 +13,8 @@ import { applyDetectedChorusEffects, applyChorusRangesByTime } from '../../../ut
 import type { ChorusRange } from '../../../utils/lyrics/chorusEffects';
 import { getOriginalCoverUrl } from '../../../utils/coverUrl';
 import { lyricProxyWebUrl } from '../../lyricProxy';
+import { hasNativeHttp, requestNativeHttp } from '../capacitorHttp';
+import { asRecord } from '../../../utils/record';
 
 const isElectron = typeof window !== 'undefined' && (window as any).electron;
 
@@ -41,29 +43,57 @@ async function requestQQ(method: string, module: string, param: any): Promise<an
   };
 
   const targetUrl = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
+  const headers = {
+    'Content-Type': 'application/json',
+    'Cookie': 'tmeLoginType=-1;',
+    'User-Agent': 'okhttp/3.14.9',
+  };
+  const body = JSON.stringify(payload);
+
+  // The shell's native bridge reaches the platform directly: it sends no CORS headers, so
+  // plain fetch is stopped there. The web build has no bridge and keeps the relay.
+  if (!isElectron && hasNativeHttp()) {
+    try {
+      const native = await requestNativeHttp(targetUrl, { method: 'POST', headers, body });
+      if (native.ok) return readMusicuAnswer(native.bodyText);
+      console.warn('[QQMusic] native request failed, trying the relay', native.status);
+    } catch (error) {
+      console.warn('[QQMusic] native request failed, trying the relay', error);
+    }
+  }
+
   const url = isElectron ? targetUrl : lyricProxyWebUrl(targetUrl);
 
   const response = await fetch(url, {
     method: 'POST',
     credentials: isElectron ? 'omit' : 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      'Cookie': 'tmeLoginType=-1;',
-      'User-Agent': 'okhttp/3.14.9',
-    },
-    body: JSON.stringify(payload),
+    headers,
+    body,
   });
 
   if (!response.ok) {
     throw new Error(`QQ Music API request failed: ${response.status}`);
   }
 
-  const data = await response.json();
-  if (data.code !== 0 || data.request?.code !== 0) {
-    throw new Error(`QQ Music API error: code ${data.code || data.request?.code}`);
+  return readMusicuAnswer(await response.text());
+}
+
+// The platform's answer: a non-zero code is the platform refusing, not "no songs".
+function readMusicuAnswer(text: string): unknown {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('QQ Music API returned an unreadable body');
+  }
+  const record = asRecord(data);
+  const request = asRecord(record?.request);
+  if (record?.code !== 0 || request?.code !== 0) {
+    const code = record?.code ?? request?.code;
+    throw new Error(`QQ Music API error: code ${typeof code === 'number' || typeof code === 'string' ? code : 'unknown'}`);
   }
 
-  return data.request.data;
+  return request.data;
 }
 
 /**

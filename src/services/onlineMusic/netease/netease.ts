@@ -5,6 +5,40 @@ import type { PersonalFmRequestOptions, ProviderSongAvailability } from '../../.
 import { withLoginRequestLimit } from '../login/loginRequestLimit';
 import { withOnlineRequestLimit } from '../failure/onlineRequestLimit';
 import { errorFields } from '../../../utils/errorText';
+import { asRecord } from '../../../utils/record';
+import { requestNativeHttp } from '../capacitorHttp';
+import QRCode from 'qrcode';
+import { weapiEncrypt } from './neteaseWeapi';
+
+// The shapes the provider reads from these answers (the backend's answers have the same shape).
+interface NeteaseQrKeyResponse { code: number; data: { unikey: string } }
+interface NeteaseQrCreateResponse { code: number; data: { qrurl: string; qrimg: string } }
+interface NeteaseLoginStatusResponse {
+    code?: number;
+    data?: { profile?: Record<string, unknown>; [key: string]: unknown };
+    [key: string]: unknown;
+}
+interface NeteaseUserAccountResponse {
+    code?: number;
+    data?: Record<string, unknown>;
+    profile?: Record<string, unknown>;
+    account?: Record<string, unknown>;
+    [key: string]: unknown;
+}
+interface NeteaseCloudSearchResponse {
+    code?: number;
+    result?: {
+        songs?: unknown[];
+        privileges?: unknown[];
+        songCount?: number;
+        albums?: unknown[];
+        albumCount?: number;
+        playlists?: unknown[];
+        playlistCount?: number;
+        [key: string]: unknown;
+    };
+    [key: string]: unknown;
+}
 
 type UnavailableSongReplacement = {
   replacementSong: SongResult;
@@ -165,6 +199,132 @@ const getApiBase = async () => {
     new Error("Failed to access environment variables for API base. Please configure VITE_NETEASE_API_BASE."),
     { code: NETEASE_API_BASE_MISSING },
   );
+};
+
+// The platform's own hosts, talked to directly where the build has no API base configured
+// (the iOS shell is a static web build: there is no backend to forward to). Search and the QR
+// sign-in use these; everything else still needs the configured backend.
+const NETEASE_DIRECT_BASE = 'https://music.163.com';
+const NETEASE_WEAPI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
+
+// Whether an API base is configured: false only where the web build has none. Any other failure
+// (the desktop backend is down) is the caller's to see, not a reason to go direct.
+const hasConfiguredApiBase = async (): Promise<boolean> => {
+  try {
+    await getApiBase();
+    return true;
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === NETEASE_API_BASE_MISSING) return false;
+    throw error;
+  }
+};
+
+// One direct JSON request to the platform, through the native bridge where the shell has it
+// (a plain fetch would be stopped by CORS: the platform sends no Access-Control-Allow-Origin).
+const requestNeteaseDirectJson = async (
+  url: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<unknown> => {
+  const response = await requestNativeHttp(url, {
+    method: options.method ?? 'GET',
+    headers: options.headers,
+    body: options.body,
+    timeoutMs: NETEASE_ONLINE_REQUEST_LIMIT_MS,
+  });
+  if (!response.ok) {
+    throw new OnlineProviderError('network', `NetEase direct request failed: ${response.status}`, 'netease', undefined, response.status);
+  }
+  try {
+    const parsed: unknown = JSON.parse(response.bodyText);
+    return parsed;
+  } catch (error) {
+    throw new OnlineProviderError('invalid-response', 'NetEase direct request returned an unreadable body', 'netease', error);
+  }
+};
+
+// One weapi request: the encrypted POST to the platform's /weapi/ URL, with the sign-in cookie
+// where one is stored. The answer is the platform's JSON body; Set-Cookie headers are not read
+// here — the sign-in check reads its cookie out of the body (see checkQr below).
+const requestNeteaseWeapi = async (path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
+  const csrf = cookie?.match(/(?:^|;\s*)__csrf=([^;]+)/)?.[1];
+  const { params, encSecKey } = await weapiEncrypt({
+    ...payload,
+    ...(csrf ? { csrf_token: csrf } : {}),
+  });
+  const headers: Record<string, string> = {
+    Referer: 'https://music.163.com',
+    'User-Agent': NETEASE_WEAPI_USER_AGENT,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  };
+  if (cookie) headers.Cookie = cookie;
+  const parsed = await requestNeteaseDirectJson(`${NETEASE_DIRECT_BASE}/weapi/${path}`, {
+    method: 'POST',
+    headers,
+    body: new URLSearchParams({ params, encSecKey }).toString(),
+  });
+  return asRecord(parsed) ?? {};
+};
+
+// The Set-Cookie header of one direct answer, as the `name=value; ...` string the sign-in keeps.
+// Each entry contributes only its first segment (the cookie itself, not its attributes).
+const cookieStringOfDirectResponse = (headers: Record<string, string>): string => {
+  const raw = Object.entries(headers).find(([name]) => name.toLowerCase() === 'set-cookie')?.[1];
+  if (!raw) return '';
+  return raw
+    .split(/,(?=\s*[^;,=\s]+=)/)
+    .map(entry => entry.split(';')[0].trim())
+    .filter(Boolean)
+    .join('; ');
+};
+
+// One direct weapi request that also keeps the answer's Set-Cookie header (the QR check's login
+// cookie arrives that way as well as in the body).
+const requestNeteaseWeapiWithCookie = async (path: string, payload: Record<string, unknown>): Promise<{ body: Record<string, unknown>; cookie: string }> => {
+  const cookie = readProviderSessionValue('netease', 'cookie', ['netease_cookie']);
+  const csrf = cookie?.match(/(?:^|;\s*)__csrf=([^;]+)/)?.[1];
+  const { params, encSecKey } = await weapiEncrypt({
+    ...payload,
+    ...(csrf ? { csrf_token: csrf } : {}),
+  });
+  const headers: Record<string, string> = {
+    Referer: 'https://music.163.com',
+    'User-Agent': NETEASE_WEAPI_USER_AGENT,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  };
+  if (cookie) headers.Cookie = cookie;
+  const response = await requestNativeHttp(`${NETEASE_DIRECT_BASE}/weapi/${path}`, {
+    method: 'POST',
+    headers,
+    body: new URLSearchParams({ params, encSecKey }).toString(),
+    timeoutMs: NETEASE_ONLINE_REQUEST_LIMIT_MS,
+  });
+  if (!response.ok) {
+    throw new OnlineProviderError('network', `NetEase direct request failed: ${response.status}`, 'netease', undefined, response.status);
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = asRecord(JSON.parse(response.bodyText)) ?? {};
+  } catch (error) {
+    throw new OnlineProviderError('invalid-response', 'NetEase direct request returned an unreadable body', 'netease', error);
+  }
+  return { body, cookie: cookieStringOfDirectResponse(response.headers) };
+};
+
+// Direct search: the platform's own search endpoint answers anonymously, no cookie needed.
+const requestNeteaseDirectCloudSearch = async (keywords: string, limit: number, offset: number, type: 1 | 10 | 1000): Promise<Record<string, unknown>> => {
+  const body = new URLSearchParams({
+    s: keywords,
+    type: String(type),
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const parsed = await requestNeteaseDirectJson(`${NETEASE_DIRECT_BASE}/api/cloudsearch/pc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  return asRecord(parsed) ?? {};
 };
 
 // A signal that aborts when either does: the caller's own (`options.signal`) and the time limit's.
@@ -407,6 +567,17 @@ const mergeSongsWithPrivileges = (songs: any, privileges: any): SongResult[] => 
       privilege,
     };
   });
+};
+
+// The song list of a search answer, with its privileges merged in (song search only).
+const mergeSongsInto = (record: Record<string, unknown>, type: 1 | 10 | 1000): void => {
+  if (type !== 1) return;
+  const result = asRecord(record.result);
+  if (!result) return;
+  result.songs = mergeSongsWithPrivileges(
+    Array.isArray(result.songs) ? result.songs : [],
+    Array.isArray(result.privileges) ? result.privileges : (Array.isArray(record.privileges) ? record.privileges : []),
+  );
 };
 
 const normalizeSongResult = (raw: any): SongResult => {
@@ -741,32 +912,83 @@ export const neteaseApi = {
     return fetchWithCreds(cookie ? `/logout?cookie=${encodeURIComponent(cookie)}` : `/logout`);
   },
 
-  getQrKey: async () => {
-    return fetchWithCreds(`/login/qr/key`, {}, 'sign-in');
+  getQrKey: async (): Promise<NeteaseQrKeyResponse> => {
+    if (await hasConfiguredApiBase()) {
+      const res: unknown = await fetchWithCreds(`/login/qr/key`, {}, 'sign-in');
+      return res as NeteaseQrKeyResponse;
+    }
+    const body = await requestNeteaseWeapi('login/qrcode/unikey', { type: 3 });
+    const unikey = body.unikey;
+    if (typeof unikey !== 'string' || !unikey) {
+      throw new OnlineProviderError('invalid-response', 'NetEase QR key request returned no key', 'netease');
+    }
+    return { code: 200, data: { unikey } };
   },
 
-  createQr: async (key: string) => {
-    return fetchWithCreds(`/login/qr/create?key=${key}&qrimg=true`, {}, 'sign-in');
+  createQr: async (key: string): Promise<NeteaseQrCreateResponse> => {
+    if (await hasConfiguredApiBase()) {
+      const res: unknown = await fetchWithCreds(`/login/qr/create?key=${key}&qrimg=true`, {}, 'sign-in');
+      return res as NeteaseQrCreateResponse;
+    }
+    // The backend renders this same URL into a QR image; without a backend the renderer does it.
+    const qrurl = `https://music.163.com/login?codekey=${key}`;
+    const qrimg = await QRCode.toDataURL(qrurl);
+    return { code: 200, data: { qrurl, qrimg } };
   },
 
-  checkQr: async (key: string) => {
-    return fetchWithCreds(`/login/qr/check?key=${key}`, {}, 'sign-in');
+  checkQr: async (key: string): Promise<Record<string, unknown>> => {
+    if (await hasConfiguredApiBase()) {
+      const res: unknown = await fetchWithCreds(`/login/qr/check?key=${key}`, {}, 'sign-in');
+      return asRecord(res) ?? {};
+    }
+    const { body, cookie } = await requestNeteaseWeapiWithCookie('login/qrcode/client/login', { key, type: 3 });
+    // The login cookie arrives in the answer body (a string) and in Set-Cookie; the provider
+    // keeps it only where it is a string, so hand it over as one either way.
+    const bodyCookie = typeof body.cookie === 'string' && body.cookie
+      ? body.cookie
+      : Array.isArray(body.cookie)
+        ? body.cookie.map((entry: unknown) => String(entry).split(';')[0].trim()).filter(Boolean).join('; ')
+        : '';
+    return { ...body, ...(bodyCookie || cookie ? { cookie: bodyCookie || cookie } : {}) };
   },
 
-  getLoginStatus: async () => {
-    const res = await fetchWithCreds(`/login/status`);
-    if (res.data?.profile) {
-      res.data.profile.avatarUrl = toHttps(res.data.profile.avatarUrl);
-      res.data.profile.backgroundUrl = toHttps(res.data.profile.backgroundUrl);
+  getLoginStatus: async (): Promise<NeteaseLoginStatusResponse> => {
+    if (await hasConfiguredApiBase()) {
+      const res: unknown = await fetchWithCreds(`/login/status`);
+      const record = asRecord(res) ?? {};
+      const profile = asRecord(asRecord(record.data)?.profile);
+      if (profile) {
+        profile.avatarUrl = toHttps(typeof profile.avatarUrl === 'string' ? profile.avatarUrl : undefined);
+        profile.backgroundUrl = toHttps(typeof profile.backgroundUrl === 'string' ? profile.backgroundUrl : undefined);
+      }
+      return record;
+    }
+    const body = await requestNeteaseWeapi('w/nuser/account/get', {});
+    const res: Record<string, unknown> = body.code === 200 ? { code: 200, data: { ...body } } : body;
+    const profile = asRecord(asRecord(res.data)?.profile);
+    if (profile) {
+      profile.avatarUrl = toHttps(typeof profile.avatarUrl === 'string' ? profile.avatarUrl : undefined);
+      profile.backgroundUrl = toHttps(typeof profile.backgroundUrl === 'string' ? profile.backgroundUrl : undefined);
     }
     return res;
   },
 
-  getUserAccount: async () => {
-    const res = await fetchWithCreds(`/user/account`);
-    if (res.profile) {
-      res.profile.avatarUrl = toHttps(res.profile.avatarUrl);
-      res.profile.backgroundUrl = toHttps(res.profile.backgroundUrl);
+  getUserAccount: async (): Promise<NeteaseUserAccountResponse> => {
+    if (await hasConfiguredApiBase()) {
+      const res: unknown = await fetchWithCreds(`/user/account`);
+      const record = asRecord(res) ?? {};
+      const profile = asRecord(record.profile);
+      if (profile) {
+        profile.avatarUrl = toHttps(typeof profile.avatarUrl === 'string' ? profile.avatarUrl : undefined);
+        profile.backgroundUrl = toHttps(typeof profile.backgroundUrl === 'string' ? profile.backgroundUrl : undefined);
+      }
+      return record;
+    }
+    const res = await requestNeteaseWeapi('nuser/account/get', {});
+    const profile = asRecord(res.profile);
+    if (profile) {
+      profile.avatarUrl = toHttps(typeof profile.avatarUrl === 'string' ? profile.avatarUrl : undefined);
+      profile.backgroundUrl = toHttps(typeof profile.backgroundUrl === 'string' ? profile.backgroundUrl : undefined);
     }
     return res;
   },
@@ -985,13 +1207,18 @@ export const neteaseApi = {
 
   // --- Search ---
   // `type`: 1 songs (the default, left out of the URL), 10 albums, 1000 playlists.
-  cloudSearch: async (keywords: string, limit = 30, offset = 0, type: 1 | 10 | 1000 = 1) => {
+  cloudSearch: async (keywords: string, limit = 30, offset = 0, type: 1 | 10 | 1000 = 1): Promise<NeteaseCloudSearchResponse> => {
     const typeParam = type === 1 ? '' : `&type=${type}`;
-    const res = await fetchWithCreds(`/cloudsearch?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${offset}${typeParam}`);
-    if (res.result && type === 1) {
-      res.result.songs = mergeSongsWithPrivileges(res.result.songs, res.result.privileges ?? res.privileges);
+    if (await hasConfiguredApiBase()) {
+      const res: unknown = await fetchWithCreds(`/cloudsearch?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${offset}${typeParam}`);
+      const record = asRecord(res) ?? {};
+      mergeSongsInto(record, type);
+      return record;
     }
-    return res;
+    // No backend configured: the platform's own search endpoint answers directly.
+    const record = await requestNeteaseDirectCloudSearch(keywords, limit, offset, type);
+    mergeSongsInto(record, type);
+    return record;
   },
 
   // --- Radio ---

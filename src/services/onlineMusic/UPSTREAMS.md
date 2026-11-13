@@ -14,6 +14,7 @@
 - **上游**：第三方库 `@neteasecloudmusicapienhanced/api`（仓库 NeteaseCloudMusicApiEnhanced/api-enhanced），它代我们向网易云自己的接口（例如 `interface.music.163.com`）发请求。
 - **版本**：4.41.1，根目录 `package.json`（钉死）和 `deploy/docker/netease-api/package.json` 都是。升级时两处和各自的锁文件一起改。
 - **桌面端怎么用**：主进程在工作线程里加载这个包，起一个只听 `127.0.0.1` 的本地服务（`electron/netease/neteaseApiWorker.cjs`，线程由 `neteaseApiHost.cjs` 开）；页面直接向 `http://127.0.0.1:<端口>` 发 HTTP（`netease/netease.ts`）。网页版发到 `VITE_NETEASE_API_BASE`。
+- **没有后端时走直连**：静态网页构建（iOS 壳）没有后端可转发时，搜索与扫码登录直接调网易云官方接口（`netease/netease.ts` 的 `requestNeteaseDirect*`，经 `capacitorHttp.ts` 的原生桥绕过 CORS）：搜索走 `music.163.com/api/cloudsearch/pc`；扫码走 weapi（`neteaseWeapi.ts`，按 NeteaseCloudMusicApi 的 `util/crypto.js` 做的 AES 双重加密 + RSA，只用了公开常量）取 unikey、查状态，二维码由页面自己用 `qrcode` 包（1.5.4，钉死）画出来。配了 `VITE_NETEASE_API_BASE` 时仍走后端，不走直连。
 - **我们改了什么**（都在 `electron/netease/`）：
   - 加载前替换包内部的 `util/request` 导出（`withoutImplicitClientIp`）：只有显式要求随机国内 IP 的请求才带伪造的来源 IP，其余请求不写 `X-Real-IP` / `X-Forwarded-For`。原因写在 `neteaseApiStartup.cjs`：上游默认的写法会让扫码确认失败。Docker 镜像用 `deploy/docker/scripts/patch-music-api-client-ip.mjs` 对包的 `server.js` 做同样的事。
   - 推迟加载包依赖的 jsdom，到收藏歌单这类带 checkToken 的请求才加载（`lazyJsdom.cjs`）。
@@ -30,6 +31,7 @@
 - **上游**：第三方库 KuGouMusicApi（MakcRe/KuGouMusicApi），包名 `kugoumusicapi`。另有一处直接调酷狗旧的公开手机接口 `https://m.kugou.com/app/i/getSongInfo.php`，在 `/song/url` 拒绝一个 hash 时用来取播放地址（`kugou/kugouTransport.ts` 的 `requestKugouLegacyPlayInfo`）。
 - **版本**：v1.6.0。不是从 npm 装的，是 GitHub 上这个标签的源码包：根目录 `package.json` 和 `deploy/docker/kugou-api/package.json` 都写 `https://github.com/MakcRe/KuGouMusicApi/archive/refs/tags/v1.6.0.tar.gz`。
 - **桌面端怎么用**：主进程直接 require 这个包、调用它的函数，不起本地服务（`electron/kugou/kugouApiBridge.cjs`，加载前设 `process.env.platform = 'lite'`）。设备 cookie 和登录态由桥接层存，用系统加密。网页版发到 `VITE_KUGOU_API_BASE`。
+- **没有后端时走直连**：静态网页构建（iOS 壳）没有后端时，扫码登录与账号读取直接调酷狗官方接口（`kugou/kugouTransport.ts` 的 `requestKugouDirect*`，经 `capacitorHttp.ts` 的原生桥绕过 CORS）：取码/查状态走 `login-user.kugou.com/v2/qrcode` 与 `get_userinfo_qrcode`，签名按 KuGouMusicApi 的 `util/helper.js`（MD5 + 公开 salt），账号读取走 `gateway.kugou.com/v3/get_my_info`（token 用公开 RSA 模数加密）；匿名搜索走 `complexsearch.kugou.com/v2/search/song`（有原生桥时直连，没有时仍走 lyric-proxy）。配了 `VITE_KUGOU_API_BASE` 时仍走后端，不走直连。
 - **我们改了什么**：桌面端没有改包；Docker 镜像跑同一个 `patch-music-api-client-ip.mjs`，改包的 `server.js`。
 - **上游变了怎么跟**：
   - 接口的参数和答复按 `docs/ku-go-api-docs.md` 对；开发时怎么用真的服务对齐，见 skill `kugou-provider-alignment`。
@@ -43,7 +45,8 @@
 - **怎么用**：
   - 桌面端：主进程 require 这个包，包在 require 时自己起一个 HTTP 服务（`electron/qq/qqApiStartup.cjs`）；页面经 `window.electron.getQqPort` 拿到端口，向 `http://127.0.0.1:<端口>` 发请求（`qq/qqTransport.ts`）。登录会话由 `electron/qq/qqAuthSessionRepository.cjs` 存。
   - 网页版：用包的 `./serverless` 导出，Vercel 的入口是 `api-ts/qq.ts`（编译成入库的 `api/qq.js`），Cloudflare 的是 `worker/qq.ts`，扫码登录通道在 `worker/qqQrChannel.ts`。两边都挂在 `/api/qq`，`VITE_QQ_API_BASE` 填 `/api/qq`。
-  - 有两处不经后端，直接向 QQ 的 musicu 发匿名请求：匿名搜歌与歌词（`qq/qqLyricProvider.ts`）、按数字 songid 查歌和批量查歌（`qq/qqTransport.ts` 的 `requestQqMusicu`）。桌面端直连 `u.y.qq.com`，网页版经前端同源的 `/api/lyric-proxy`。
+  - 有两处不经后端，直接向 QQ 的 musicu 发匿名请求：匿名搜歌与歌词（`qq/qqLyricProvider.ts`）、按数字 songid 查歌和批量查歌（`qq/qqTransport.ts` 的 `requestQqMusicu`）。桌面端直连 `u.y.qq.com`；网页版没有原生桥时经前端同源的 `/api/lyric-proxy`，有原生桥（iOS 壳）时经 `capacitorHttp.ts` 直连 `u.y.qq.com`（CORS 被原生桥绕过）。
+  - 扫码登录没有直连路：取码、生成、查状态、取消都走后端（`login_qr_key` / `login_qr_create` / `login_qr_check` / `login_qr_cancel`），静态网页构建（iOS 壳）没有后端时 QQ 登录点不动。想在 iOS 上用 QQ 登录，要先把 `worker/qq.ts` 部署到 Cloudflare（或 `api/qq.js` 部署到 Vercel），再把部署好的绝对地址编进构建（`VITE_QQ_API_BASE`，不能填相对的 `/api/qq`，壳里没有这个同源路径）。
 - **我们改了什么**：不改包。`api-ts/qq.ts` 和 `worker/qq.ts` 只把宿主的路径还原成包认识的路径。部署细节（Vercel、Cloudflare、Docker、裸 Node 四种）在 [`docs/qq-music-deployment.md`](../../../docs/qq-music-deployment.md)。
 - **上游变了怎么跟**：
   - `test/unit/onlineMusic/qqServerlessClosure.test.ts` 读真的包：`./serverless` 的依赖里不能有别的 npm 包和 `node:*`，`process.env.*` 要能在编译时换掉，入库的 `api/qq.js` 要存在。升级后这条最先告诉你网页版还能不能部署。

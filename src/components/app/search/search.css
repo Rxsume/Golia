@@ -234,8 +234,11 @@
     .search-composition { opacity: 0.35; }
 }
 
-/* 手机上只留色块、大圆、细线和碎字：小形状没有页边可放，只会压在页签上。 */
+/* 手机上只留细线和碎字：色块 52vh 高会压住顶栏的搜索框与关闭按钮，大圆 56vh 挤占列表，
+   小形状没有页边可放，只会压在页签上。 */
 @media (max-width: 640px) {
+    .search-figure.is-slab,
+    .search-figure.is-disc,
     .search-figure.is-dot,
     .search-figure.is-bar,
     .search-figure.is-hatch,
@@ -288,6 +291,9 @@
     display: inline-flex;
     width: 44px;
     height: 44px;
+    /* iOS 壳的适配层给所有 button 按缩放反算了一个 min-height（横屏 0.47 下 68px），
+       height 会被 min-height 顶掉：这里把设计尺寸钉死，类选择器优先于那边的元素选择器。 */
+    min-height: 44px;
     flex: none;
     align-items: center;
     justify-content: center;
@@ -309,6 +315,8 @@
 .search-source {
     position: relative;
     flex: none;
+    /* 同 .search-close：不让壳层全局 button 的 min-height（横屏 68px）把页签行撑高。 */
+    min-height: 0;
     padding: 6px 0 9px;
     border: 0;
     color: var(--search-ink-soft);
@@ -347,6 +355,8 @@
     display: inline-flex;
     align-items: baseline;
     gap: 8px;
+    /* 同 .search-close：不让壳层全局 button 的 min-height（横屏 68px）把页签行撑高。 */
+    min-height: 0;
     padding: 0 0 0 20px;
     border: 0;
     color: var(--search-ink-soft);
@@ -532,6 +542,8 @@
     display: inline-flex;
     width: 34px;
     height: 34px;
+    /* 同 .search-close：不让壳层全局 button 的 min-height（横屏 68px）把行撑爆。 */
+    min-height: 34px;
     flex: none;
     align-items: center;
     justify-content: center;
@@ -548,7 +560,7 @@
 @media (max-width: 639px) {
     .search-row { gap: 10px; }
     .search-row-index { display: none; }
-    .search-row-action { width: 30px; height: 30px; }
+    .search-row-action { width: 30px; height: 30px; min-height: 30px; }
 }
 
 /* 只在真能悬停的设备上藏起来等悬停：宽屏触屏上看不见的按钮会被点到。 */

@@ -464,7 +464,7 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
                                 <Loader2 className="absolute left-3 top-1/2 w-4 h-4 animate-spin opacity-40 -mt-2" />
                             ) : (
                                 <Search
-                                    className="absolute left-3 top-1/2 -translate-y-1/2 opacity-40 w-4 h-4 cursor-pointer hover:opacity-100 transition-opacity"
+                                    className="absolute left-3 top-1/2 -mt-2 opacity-40 w-4 h-4 cursor-pointer hover:opacity-100 transition-opacity"
                                     onClick={() => handleSearch()}
                                 />
                             )}

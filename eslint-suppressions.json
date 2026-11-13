@@ -9700,10 +9700,10 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 12
+      "count": 11
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 22
+      "count": 21
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
@@ -9755,16 +9755,16 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 84
+      "count": 81
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 18
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 271
+      "count": 256
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 64
+      "count": 58
     },
     "@typescript-eslint/only-throw-error": {
       "count": 3
@@ -10171,13 +10171,13 @@
       "count": 4
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 17
+      "count": 16
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 22
+      "count": 17
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1

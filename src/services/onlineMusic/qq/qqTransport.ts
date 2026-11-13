@@ -3,6 +3,7 @@ import { readProviderSessionValue, removeProviderSessionValue, writeProviderSess
 import { withLoginRequestLimit } from '../login/loginRequestLimit';
 import { withOnlineRequestLimit } from '../failure/onlineRequestLimit';
 import { lyricProxyWebUrl } from '../../lyricProxy';
+import { hasNativeHttp, requestNativeHttp } from '../capacitorHttp';
 import { errorMessage } from '../../../utils/errorText';
 
 // src/services/onlineMusic/qq/qqTransport.ts
@@ -556,6 +557,21 @@ export const requestQqMusicu = async (
     };
     // The answer and its body, read together: the time limit covers both. A refused answer's body is not read.
     const send = async (signal: AbortSignal) => {
+        // The shell's native bridge reaches the platform directly: it sends no CORS headers, so
+        // plain fetch is stopped there. The web build has no bridge and keeps the relay.
+        if (!direct && hasNativeHttp()) {
+            try {
+                const native = await requestNativeHttp(QQ_MUSICU_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comm: QQ_MUSICU_COMM, ...requests }),
+                });
+                const response = new Response(native.bodyText, { status: native.status, headers: native.headers });
+                return { response, text: native.ok ? native.bodyText : '' };
+            } catch (error) {
+                console.warn('[QQ] musicu native request failed, trying the relay', error);
+            }
+        }
         const response = await fetch(url, { ...init, signal });
         return { response, text: response.ok ? await response.text() : '' };
     };

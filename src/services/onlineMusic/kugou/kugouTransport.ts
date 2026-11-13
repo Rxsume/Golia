@@ -3,6 +3,9 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import { readProviderSessionValue, removeProviderSessionValue, writeProviderSessionValue } from '../providerStorage';
 import { lyricProxyWebUrl, requestLyricProxyOnDesktop } from '../../lyricProxy';
 import { withLoginRequestLimit } from '../login/loginRequestLimit';
+import { hasNativeHttp, requestNativeHttp } from '../capacitorHttp';
+import { rsaRawEncrypt } from '../../../utils/rsaRaw';
+import { asRecord } from '../../../utils/record';
 
 // src/services/onlineMusic/kugou/kugouTransport.ts
 
@@ -81,6 +84,163 @@ const isDeviceVerificationRequired = (body: any): boolean => {
 
 // The web build has no KuGouMusicApi address configured: KuGou cannot be used there at all.
 export const KUGOU_API_BASE_MISSING = 'VITE_KUGOU_API_BASE is not configured';
+
+// The operations the web build can serve directly, without a configured backend, where the
+// shell has a native bridge: the QR sign-in (its upstream endpoints take a signed GET) and the
+// account read the sign-in ends with. Everything else still needs the configured backend.
+const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail']);
+
+// The QR image the key endpoint itself returns, kept by key until the image is asked for:
+// asking for a key again would mint a different code and orphan the one on screen.
+const qrImages = new Map<string, string>();
+
+// The signature salts of the bundled backend (KuGouMusicApi util/helper.js), and the platform's
+// public RSA key (1024-bit, exponent 65537), as published in its source. Only public constants.
+const WEB_SIGN_SALT = 'NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt';
+const ANDROID_SIGN_SALT = 'OIlwieks28dk2k092lksi2UIkp';
+const PUBLIC_MODULUS_HEX = 'c8006ed03842d2628209bd314984ca5ed6cfe06e30c95f9d4704d9c49791d7a935ba950ecb0bc8ebf5f5994f0bac927a7eb151b3c1de343303fa539c83136eccfd7d7e511e2dbce18eaa9f784c9b50d443e75865979e0a5e216e46c684066a8d6b998580bbaa22d73f5790286bb14742e83244e44db6d707ffe162c5c7002d45';
+
+// The web signature (KuGouMusicApi util/helper.js signatureWebParams): the `key=value` strings,
+// sorted as strings, wrapped in the salt and MD5-hashed.
+const signatureWebParams = (params: Record<string, string | number>): string => {
+    const paramsString = Object.keys(params)
+        .map(key => `${key}=${params[key]}`)
+        .sort()
+        .join('');
+    return md5(`${WEB_SIGN_SALT}${paramsString}${WEB_SIGN_SALT}`);
+};
+
+// The Android signature (signatureAndroidParams): the keys sorted, then `key=value` joined,
+// with the request body between the two salts.
+const signatureAndroidParams = (params: Record<string, string | number>, data: string): string => {
+    const paramsString = Object.keys(params)
+        .sort()
+        .map(key => `${key}=${params[key]}`)
+        .join('');
+    return md5(`${ANDROID_SIGN_SALT}${paramsString}${data}${ANDROID_SIGN_SALT}`);
+};
+
+// The default parameters and headers the bundled backend injects into every request
+// (KuGouMusicApi util/request.js), with the session's own values where one is stored.
+const directDefaults = (): { params: Record<string, string | number>; headers: Record<string, string> } => {
+    const clienttime = Math.floor(Date.now() / 1000);
+    const dfid = readProviderSessionValue('kugou', 'dfid') || '-';
+    const token = readProviderSessionValue('kugou', 'token') || '';
+    const userId = readProviderSessionValue('kugou', 'userid') || '';
+    const params: Record<string, string | number> = {
+        dfid, mid: 'undefined', uuid: '-', appid: 1005, clientver: 20489, clienttime,
+    };
+    if (token) params.token = token;
+    if (userId) params.userid = userId;
+    return {
+        params,
+        headers: {
+            'User-Agent': 'Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi',
+            dfid, clienttime: String(clienttime), mid: 'undefined',
+            'kg-rc': '1', 'kg-thash': '5d816a0', 'kg-rec': '1', 'kg-rf': 'B9EDA08A64250DEFFBCADDEE00F8F25F',
+        },
+    };
+};
+
+const signedUrl = (base: string, query: Record<string, string | number>): string => {
+    const url = new URL(base);
+    Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, String(value)));
+    return url.toString();
+};
+
+// One direct JSON request to the platform, through the native bridge (plain fetch would be
+// stopped by CORS: the platform sends no Access-Control-Allow-Origin).
+const requestKugouDirectJson = async (url: string, options: { method?: string; headers?: Record<string, string>; body?: string }): Promise<unknown> => {
+    const response = await requestNativeHttp(url, { method: options.method ?? 'GET', headers: options.headers, body: options.body });
+    if (!response.ok) {
+        throw new OnlineProviderError('network', `KuGou direct request failed: ${response.status}`, 'kugou', undefined, response.status);
+    }
+    try {
+        const parsed: unknown = JSON.parse(response.bodyText);
+        return parsed;
+    } catch (error) {
+        throw new OnlineProviderError('invalid-response', 'KuGou direct request returned an unreadable body', 'kugou', error);
+    }
+};
+
+// The QR key, straight from the platform's login host (KuGouMusicApi module/login_qr_key.js).
+// The answer carries the QR image itself, kept for the create step.
+const requestKugouDirectQrKey = async (): Promise<unknown> => {
+    const { params, headers } = directDefaults();
+    const query: Record<string, string | number> = {
+        ...params, appid: 1001, type: 1, plat: 4,
+        qrcode_txt: 'https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=1001&',
+        srcappid: 2919,
+    };
+    query.signature = signatureWebParams(query);
+    const body = await requestKugouDirectJson(signedUrl('https://login-user.kugou.com/v2/qrcode', query), { headers });
+    const data = asRecord(asRecord(body)?.data);
+    const key = data?.qrcode;
+    const image = data?.qrcode_img;
+    if (typeof key === 'string' && key && typeof image === 'string' && image) qrImages.set(key, image);
+    return body;
+};
+
+// The QR image for a key minted above (KuGouMusicApi module/login_qr_create.js renders the same
+// URL locally; here the image already came with the key).
+const requestKugouDirectQrCreate = (key: string): { code: number; data: { url: string; qrimg: string } } => {
+    const image = qrImages.get(key);
+    if (!image) {
+        throw new OnlineProviderError('invalid-response', 'KuGou QR image is not available for this key', 'kugou');
+    }
+    return {
+        code: 200,
+        data: {
+            url: `https://h5.kugou.com/apps/loginQRCode/html/index.html?qrcode=${key}`,
+            qrimg: image,
+        },
+    };
+};
+
+// One poll of a QR code's state (KuGouMusicApi module/login_qr_check.js).
+const requestKugouDirectQrCheck = async (key: string): Promise<unknown> => {
+    const { params, headers } = directDefaults();
+    const query: Record<string, string | number> = { ...params, plat: 4, srcappid: 2919, qrcode: key };
+    query.signature = signatureWebParams(query);
+    return requestKugouDirectJson(signedUrl('https://login-user.kugou.com/v2/get_userinfo_qrcode', query), { headers });
+};
+
+// The account read (KuGouMusicApi module/user_detail.js): the token is RSA-encrypted into the
+// body, the request signed like an Android client, routed by the x-router header.
+const requestKugouDirectUserDetail = async (params: KugouParams): Promise<unknown> => {
+    const token = readProviderSessionValue('kugou', 'token') || '';
+    const userId = Number(params.userid ?? readProviderSessionValue('kugou', 'userid') ?? '0');
+    const clienttime = Math.floor(Date.now() / 1000);
+    const pk = rsaRawEncrypt(
+        new TextEncoder().encode(JSON.stringify({ token, clienttime })),
+        PUBLIC_MODULUS_HEX,
+    ).toUpperCase();
+    const data = JSON.stringify({ visit_time: clienttime, usertype: 1, p: pk, userid: userId });
+    const { params: defaults, headers } = directDefaults();
+    const query: Record<string, string | number> = { ...defaults, plat: 1 };
+    query.signature = signatureAndroidParams(query, data);
+    return requestKugouDirectJson(signedUrl('https://gateway.kugou.com/v3/get_my_info', query), {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'x-router': 'usercenter.kugou.com' },
+        body: data,
+    });
+};
+
+// One direct operation, in the shape the web backend would have answered with.
+const requestKugouDirect = async (operation: KugouOperation, params: KugouParams): Promise<unknown> => {
+    if (operation === 'login_qr_key') return requestKugouDirectQrKey();
+    if (operation === 'login_qr_create') {
+        const key = String(params.key ?? '');
+        return requestKugouDirectQrCreate(key);
+    }
+    if (operation === 'login_qr_check') {
+        const response = await requestKugouDirectQrCheck(String(params.key ?? params.qrcode ?? ''));
+        persistWebSession(operation, response);
+        return response;
+    }
+    if (operation === 'user_detail') return requestKugouDirectUserDetail(params);
+    throw new OnlineProviderError('unavailable', KUGOU_API_BASE_MISSING, 'kugou');
+};
 
 // HTTP-like statuses that unambiguously mean the account session is no longer accepted.
 const KUGOU_AUTH_FAILURE_STATUSES: ReadonlySet<number> = new Set([401, 403]);
@@ -279,22 +439,52 @@ export const requestKugouAnonymousSearch = async (
         `LnT6xpN3khm36zse0QzvmgTZ3waWdRSA${signatureSource}LnT6xpN3khm36zse0QzvmgTZ3waWdRSA`,
     );
 
-    const targetUrl = new URL('http://complexsearch.kugou.com/v2/search/song');
+    const targetUrl = new URL('https://complexsearch.kugou.com/v2/search/song');
     Object.entries(params).forEach(([key, value]) => targetUrl.searchParams.set(key, String(value)));
-    const requestUrl = typeof window !== 'undefined' && window.electron
-        ? targetUrl.toString()
-        : lyricProxyWebUrl(targetUrl.toString());
-    const response = await fetch(requestUrl, {
+    const headers: Record<string, string> = {
+        'User-Agent': 'Android14-1070-11070-201-0-SearchSong-wifi',
+        'KG-Rec': '1',
+        'KG-RC': '1',
+        'KG-CLIENTTIMEMS': String(clientTimeMs),
+        mid,
+        'x-router': 'complexsearch.kugou.com',
+    };
+    // The shell's native bridge reaches the search host directly: it sends no CORS headers, so
+    // plain fetch is stopped there. The web build has no bridge and keeps the relay.
+    if (typeof window !== 'undefined' && window.electron) {
+        const response = await fetch(targetUrl.toString(), {
+            method: 'GET',
+            credentials: 'omit',
+            headers,
+        });
+        if (!response.ok) {
+            throw new OnlineProviderError(
+                'network',
+                `KuGou anonymous search failed: ${response.status}`,
+                'kugou',
+            );
+        }
+        return parseKugouAnonymousSearchBody(await response.text());
+    }
+    if (hasNativeHttp()) {
+        try {
+            const native = await requestNativeHttp(targetUrl.toString(), { method: 'GET', headers });
+            if (!native.ok) {
+                throw new OnlineProviderError(
+                    'network',
+                    `KuGou anonymous search failed: ${native.status}`,
+                    'kugou',
+                );
+            }
+            return parseKugouAnonymousSearchBody(native.bodyText);
+        } catch (error) {
+            console.warn('[Kugou] anonymous search native request failed, trying the relay', error);
+        }
+    }
+    const response = await fetch(lyricProxyWebUrl(targetUrl.toString()), {
         method: 'GET',
         credentials: 'omit',
-        headers: {
-            'User-Agent': 'Android14-1070-11070-201-0-SearchSong-wifi',
-            'KG-Rec': '1',
-            'KG-RC': '1',
-            'KG-CLIENTTIMEMS': String(clientTimeMs),
-            mid,
-            'x-router': 'complexsearch.kugou.com',
-        },
+        headers,
     });
     if (!response.ok) {
         throw new OnlineProviderError(
@@ -303,8 +493,22 @@ export const requestKugouAnonymousSearch = async (
             'kugou',
         );
     }
-    const body = await response.json();
-    const errorCode = Number(body?.error_code);
+    return parseKugouAnonymousSearchBody(await response.text());
+};
+
+// The anonymous search answer, read as JSON: a non-zero error code is the platform refusing.
+const parseKugouAnonymousSearchBody = (text: string): unknown => {
+    let body: unknown;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        throw new OnlineProviderError(
+            'invalid-response',
+            'KuGou anonymous search returned an unreadable body',
+            'kugou',
+        );
+    }
+    const errorCode = Number(asRecord(body)?.error_code);
     if (Number.isFinite(errorCode) && errorCode !== 0 && errorCode !== 200) {
         throw new OnlineProviderError(
             'network',
@@ -480,6 +684,8 @@ const persistElectronAccountHint = (operation: KugouOperation, response: any): v
 
 export const getKugouTransportAvailability = () => {
     if (typeof window !== 'undefined' && window.electron?.kugouRequest) return { configured: true } as const;
+    // The shell's native bridge serves search and the QR sign-in directly, no backend needed.
+    if (hasNativeHttp()) return { configured: true } as const;
     return getWebApiBase()
         ? { configured: true } as const
         : { configured: false, reason: 'not-configured' as const };
@@ -511,6 +717,13 @@ export const requestKugou = async <T = unknown>(operation: KugouOperation, param
 
     const base = getWebApiBase();
     if (!base) {
+        // No backend configured: the sign-in and the account read go direct where the shell has
+        // a native bridge; anything else still has no way to run.
+        if (hasNativeHttp() && DIRECT_OPERATIONS.has(operation)) {
+            return (limited
+                ? withLoginRequestLimit(() => requestKugouDirect(operation, params))
+                : requestKugouDirect(operation, params)) as Promise<T>;
+        }
         throw new OnlineProviderError('unavailable', KUGOU_API_BASE_MISSING, 'kugou');
     }
     const execute = async (targetOperation: KugouOperation, targetParams: KugouParams): Promise<any> => {

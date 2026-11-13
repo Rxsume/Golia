@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // test/unit/onlineMusic/kugouTransport.test.ts
 
+import { asRecord } from '@/utils/record';
+
 const storage = new Map<string, string>();
 
 describe('KuGou Web transport', () => {
@@ -604,5 +606,111 @@ describe('KuGou Web transport', () => {
             expect(error).toMatchObject({ code: 'invalid-response' });
             expect((error as { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
         });
+    });
+});
+
+describe('KuGou direct transport (no backend configured)', () => {
+    const directStorage = new Map<string, string>();
+
+    const nativeRequest = (routes: Record<string, unknown>) => vi.fn(async (options: { url: string }) => {
+        for (const [fragment, data] of Object.entries(routes)) {
+            if (options.url.includes(fragment)) return { status: 200, headers: {}, data };
+        }
+        throw new Error(`unexpected native URL ${options.url}`);
+    });
+
+    const stubNativeShell = (request: ReturnType<typeof vi.fn>) => {
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch must not be called')));
+    };
+
+    beforeEach(() => {
+        vi.resetModules();
+        directStorage.clear();
+        storage.clear();
+        vi.stubEnv('VITE_KUGOU_API_BASE', '');
+        vi.stubGlobal('localStorage', {
+            getItem: (key: string) => directStorage.get(key) ?? null,
+            setItem: (key: string, value: string) => directStorage.set(key, value),
+            removeItem: (key: string) => directStorage.delete(key),
+        });
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+    });
+
+    it('searches anonymously through the native bridge', async () => {
+        const request = nativeRequest({
+            'complexsearch.kugou.com': JSON.stringify({
+                error_code: 0, status: 1,
+                data: { lists: [{ FileHash: 'ABC', SongName: '晴天', SingerName: '周杰伦', Duration: 269 }] },
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugouAnonymousSearch } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const body = await requestKugouAnonymousSearch('晴天', 1, 20);
+        expect(body.data.lists).toHaveLength(1);
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: expect.stringContaining('https://complexsearch.kugou.com/v2/search/song'),
+        }));
+    });
+
+    it('takes the QR key and image straight from the platform', async () => {
+        const request = nativeRequest({
+            'login-user.kugou.com/v2/qrcode': JSON.stringify({
+                data: { qrcode: 'direct-key', qrcode_img: 'data:image/png;base64,AAA' },
+                status: 1, error_code: 0,
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const key = await requestKugou('login_qr_key');
+        expect(asRecord(asRecord(key)?.data)?.qrcode).toBe('direct-key');
+        const created = await requestKugou('login_qr_create', { key: 'direct-key', qrimg: true });
+        expect(asRecord(asRecord(created)?.data)?.qrimg).toBe('data:image/png;base64,AAA');
+    });
+
+    it('polls a QR code straight from the platform', async () => {
+        const request = nativeRequest({
+            'login-user.kugou.com/v2/get_userinfo_qrcode': JSON.stringify({
+                data: { status: 1 }, status: 1, error_code: 0,
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const checked = await requestKugou('login_qr_check', { key: 'direct-key', qrcode: 'direct-key' });
+        expect(asRecord(asRecord(checked)?.data)?.status).toBe(1);
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: expect.stringContaining('signature='),
+        }));
+    });
+
+    it('reads the account straight from the platform', async () => {
+        const request = nativeRequest({
+            'gateway.kugou.com/v3/get_my_info': JSON.stringify({
+                data: { user_info: { userid: '9', nickname: 'Tester' } },
+                status: 1, error_code: 0,
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const detail = await requestKugou('user_detail', { userid: '9' });
+        expect(asRecord(asRecord(asRecord(detail)?.data)?.user_info)?.nickname).toBe('Tester');
+        const sent = request.mock.calls[0][0] as { url: string; data: string };
+        expect(sent.url).toContain('signature=');
+        expect(JSON.parse(sent.data).p).toMatch(/^[0-9A-F]{256}$/);
+    });
+
+    it('still reports not-configured where there is no bridge and no backend', async () => {
+        vi.stubGlobal('window', undefined);
+        const { getKugouTransportAvailability } = await import('@/services/onlineMusic/kugou/kugouTransport');
+        expect(getKugouTransportAvailability()).toEqual({ configured: false, reason: 'not-configured' });
     });
 });

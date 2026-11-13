@@ -7,6 +7,7 @@ import type { SongResult } from '../../../types';
 import { groupScratchpadEntries, scratchpadGroupKey, useScratchpadStore, type ScratchpadEntry, type ScratchpadTab } from '../../../stores/useScratchpadStore';
 import { usePlaybackStore } from '../../../stores/usePlaybackStore';
 import { useScratchpadSettingsStore } from '../../../stores/useScratchpadSettingsStore';
+import { useSearchNavigationStore } from '../../../stores/useSearchNavigationStore';
 import { PRIMARY_MODIFIER_LABEL } from '../../../utils/platform';
 import { useReducedMotionFor } from '../../../hooks/useReducedMotionFor';
 import { openAddSongsToPlaylist } from '../../../stores/useAddToPlaylistStore';
@@ -157,6 +158,10 @@ const ScratchpadHost: React.FC<ScratchpadHostProps> = ({ isDaylight, playback, q
     })));
     const groups = useMemo(() => groupScratchpadEntries(entries), [entries]);
     const queueLength = usePlaybackStore(state => state.playQueue.length);
+    // 搜索页是全屏覆盖层（z-50），盖不过左缘的把手与抽屉（z-95）：搜着时把整根藏起来，关了搜索再原样回来。
+    // 抽屉已经开着时不动——搜结果里「加入速记簿」就是靠它开抽屉给反馈的，藏了就看不见。
+    const isSearchOpen = useSearchNavigationStore(state => state.isSearchOpen);
+    const isHidden = isCovered || (isSearchOpen && !isOpen);
     // 设置里能把把手整个藏起来（抽屉照常用 Ctrl / ⌘ + J、命令面板开合），也能把它挪到左缘的别的高度。
     const showHandle = useScratchpadSettingsStore(state => state.showHandle);
     const handlePosition = useScratchpadSettingsStore(state => state.handlePosition);
@@ -293,7 +298,7 @@ const ScratchpadHost: React.FC<ScratchpadHostProps> = ({ isDaylight, playback, q
     // 抽屉开着、焦点不在任何地方（刚用把手或 Ctrl / ⌘ + J 打开，把手一卸掉焦点就落在 body）时，Tab 也归抽屉换页；
     // 焦点在别处（资料库、输入框）时 Tab 照常走焦点。
     useEffect(() => {
-        if (!isOpen || isCovered) return;
+        if (!isOpen || isCovered || isSearchOpen) return;
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.defaultPrevented || !isTabCycleKey(event)) return;
             const active = document.activeElement;
@@ -303,13 +308,13 @@ const ScratchpadHost: React.FC<ScratchpadHostProps> = ({ isDaylight, playback, q
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [cycleTab, isCovered, isOpen]);
+    }, [cycleTab, isCovered, isOpen, isSearchOpen]);
     // 展开整页盖住了墙：点的那颗按钮跟着浮动板、跟着删空的那一页一起卸掉，焦点落到 body 时，按键也归速记簿——
     // Esc 收回侧栏，其余抽屉键把焦点交还给这一页（画布、总览或整页本身），不让它们落到墙上（墙的键盘在 window 上听，
     // 所以这里在捕获阶段先接住）。Tab 交给上面那个换页。
     const drawerRef = useRef<HTMLElement>(null);
     useEffect(() => {
-        if (!isOpen || !isExpanded || isCovered) return;
+        if (!isOpen || !isExpanded || isCovered || isSearchOpen) return;
         const onKeyDown = (event: KeyboardEvent) => {
             const active = document.activeElement;
             if ((active && active !== document.body) || isTabCycleKey(event)) return;
@@ -326,14 +331,14 @@ const ScratchpadHost: React.FC<ScratchpadHostProps> = ({ isDaylight, playback, q
         };
         window.addEventListener('keydown', onKeyDown, true);
         return () => window.removeEventListener('keydown', onKeyDown, true);
-    }, [collapseCanvas, isCovered, isExpanded, isOpen]);
+    }, [collapseCanvas, isCovered, isExpanded, isOpen, isSearchOpen]);
     // 左缘面板浮在墙上（用户要的，2026-11-06）：Esc 先收起它，点墙上的空白处也收起它。
     // Esc：焦点在面板里由 handleKeyDown 管（收起后焦点交还把手）；这里管焦点在面板外的时候——刚用把手或 Ctrl / ⌘ + J 打开
     // （焦点落在 body）、点过墙上别处。焦点在输入框、弹窗、菜单里，或有模态弹窗开着时，Esc 是它们的。捕获阶段先接住，墙不再收到这一下。
     // 空白处：按下时就看准（处理函数可能在点击里把节点换掉），不在速记簿里、不是墙上可以点的东西（NOT_BLANK_SELECTOR）；
     // 松开时没挪开、没被谁接走（点击冒到 window 上、没 preventDefault）才收。
     useEffect(() => {
-        if (!isOpen || isExpanded || isCovered) return;
+        if (!isOpen || isExpanded || isCovered || isSearchOpen) return;
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
             const active = document.activeElement;
@@ -364,7 +369,7 @@ const ScratchpadHost: React.FC<ScratchpadHostProps> = ({ isDaylight, playback, q
             window.removeEventListener('pointerdown', onPointerDown, true);
             window.removeEventListener('click', onClick);
         };
-    }, [isCovered, isExpanded, isOpen, setOpen]);
+    }, [isCovered, isExpanded, isOpen, isSearchOpen, setOpen]);
 
     const handleKeyDown = (event: React.KeyboardEvent) => {
         // 抽屉里 Tab 不走焦点，换页签（用户定，2026-11-05）；按钮之间用方向键和鼠标。
@@ -530,7 +535,7 @@ const ScratchpadHost: React.FC<ScratchpadHostProps> = ({ isDaylight, playback, q
 
     return (
         <div
-            className={`scratchpad-root${isDaylight ? ' is-daylight' : ''}${isCovered ? ' is-covered' : ''}${calm ? ' is-calm' : ''}`}
+            className={`scratchpad-root${isDaylight ? ' is-daylight' : ''}${isHidden ? ' is-covered' : ''}${calm ? ' is-calm' : ''}`}
             style={lookVars}
         >
             {!isOpen && !isHandleHidden && showHandle && (
