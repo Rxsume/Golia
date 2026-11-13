@@ -10,6 +10,8 @@ import { HELP_TAB_PLAYER_CONTROLS, HELP_TAB_PRIMARY_SHORTCUTS } from '../../user
 import { Button, CopyButton, CopyValue, Group, Keys, Row, type SettingsGroupDef } from '../kit';
 import { openOutsideLink } from '../../../../utils/system/outsideLink';
 import { FoundUpdateRow } from './FoundUpdateRow';
+import { AppUpdateSettingsRow } from '../../../appUpdate/AppUpdateSettingsRow';
+import { useSettingsPage } from './settingsPageContext';
 import { ChinaDrivesRow } from './ChinaDrivesRow';
 import { iconLabel } from './iconLabel';
 
@@ -99,6 +101,7 @@ type HelpPageProps = {
 
 const HelpPage: React.FC<HelpPageProps> = ({ onOpenReleaseNotes, onOpenAiHelp, onProjectLabelClick }) => {
     const { t } = useTranslation();
+    const { isElectron } = useSettingsPage();
 
     return (
         <>
@@ -163,6 +166,8 @@ const HelpPage: React.FC<HelpPageProps> = ({ onOpenReleaseNotes, onOpenAiHelp, o
                 {BUILD_KIND !== 'official' && (
                     <Row sub notice={t(BUILD_KIND === 'unofficial' ? 'options.unofficialBuildNotice' : 'options.selfHostedBuildNotice')} />
                 )}
+                {/* The web update check (the desktop row above is Electron-only): the current lx build, a check on tap, the download button once one is found. */}
+                {!isElectron && <AppUpdateSettingsRow />}
                 <FoundUpdateRow sub />
                 <ChinaDrivesRow sub quiet />
                 <Row

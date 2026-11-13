@@ -10,6 +10,7 @@ import type { HomeViewModel } from './home/buildHomeModel';
 import { useFoliumHomeNavigation } from './home/useFoliumHomeNavigation';
 import { closeFoliumHomeTab } from '../../mods/folium/registries/homeTabs';
 import { FoliumHomePage } from './home/FoliumHomePage';
+import { AppUpdateBanner } from '../appUpdate/AppUpdateBanner';
 import { countRender } from '../../dev/renderCount';
 
 // App-level entry for the home surface backed by a view model.
@@ -43,6 +44,7 @@ const Home: React.FC<AppHomeProps> = ({ model, isHomeFullyHidden, isInteractive 
 
     return (
         <>
+            <AppUpdateBanner />
             {/* 模组页面开着时原生首页整层 inert，并且自成层叠上下文（isolate）：集合层（GridView / GridMap / TUI 的
                 z-[110]）、宿主对话框（z-[120]/[140]）、开发版 suite 切换浮层只在这一层里比高低，整层压在页面（z-[60]）
                 下面——集合开着时 openHomeTab 打开的页面不会被它盖住。就地渲染的登录弹窗不在这一层里，仍在页面之上。 */}

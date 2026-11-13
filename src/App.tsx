@@ -34,6 +34,7 @@ import LegacyModelsPrompt from './components/modal/LegacyModelsPrompt';
 import { PlaybackEntryViewPrompt } from './components/modal/playback-entry-view/PlaybackEntryViewPrompt';
 import { LatticeFmNotice } from './components/modal/playback-entry-view/LatticeFmNotice';
 import { useStartupExperienceGate } from './hooks/useStartupExperienceGate';
+import { useAppUpdateStartupCheck } from './components/appUpdate/useAppUpdateStartupCheck';
 import { useAppDialogsModel } from './components/app/dialogs/useAppDialogsModel';
 import { useHomeModel } from './components/app/home/useHomeModel';
 import { createLyricFilterPatternSaver } from './components/app/home/createLyricFilterPatternSaver';
@@ -327,6 +328,7 @@ export default function App() {
     }, [automixEnabled, transitionMode]);
 
     const startupExperience = useStartupExperienceGate();
+    useAppUpdateStartupCheck();
 
     useEffect(() => initializeSyncCoordinator(), []);
 

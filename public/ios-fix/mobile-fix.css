@@ -645,3 +645,35 @@ button.top-6.left-6.h-10.w-10 {
   transform: translate(calc(8px / var(--ios-scale, 1)), calc(-8px / var(--ios-scale, 1))) !important;
 }
 
+
+/* ══════════ 2026-11-13 lx6：界面微调精确数（用户 22:43 给数，以这次为准） ══════════
+   下面说的都是从原始位置算的总位移，lx5 已做一部分，这里按最终值覆盖（同选择器、放文件末尾，后来者胜）。
+   注意：22:34 那版的 13pt/15pt 已作废，以本版为准。
+   - 返回箭头：总计上移 11.5pt。lx5 已上移 8pt（safe-area+12px→+4px），本轮再上 3.5pt → safe-area+0.5px（12−11.5=+0.5）。
+   - 首页搜索框：总计右 16pt、上 16pt。lx5 已右 8pt、上 8pt，本轮改成 translate(16px,−16px)，离灵动岛更远。
+     另外搜索框再缩短约 10%：手机（<768px）78% → 70%，桌面（≥768px）176px → 158px，聚焦时 224px → 202px，
+     聚焦仍可展开。只缩短宽度，不改高度、颜色、功能。
+   - 速记簿竖条：从左上角下移到左边缘中间（垂直居中）。元素是 .scratchpad-edge（fixed，z-95，top 由
+     --scratchpad-edge-position 设置项控制，默认 72px 顶部）。这里直接钉到 top: 50% + translateY(-50%)。
+     只改垂直位置，不改大小、颜色、点击行为，不动展开后的抽屉；lx2 的“搜索页打开时隐藏”逻辑（.is-covered）
+     在父级 .scratchpad-root 上，不受影响。注意：中段会和 Bravais 信息条标签叠在一起（上游注释写明的取舍），
+     用户坚持要放中间。 */
+button.top-6.left-6.h-10.w-10 {
+  top: calc(env(safe-area-inset-top, 0px) / var(--ios-scale, 1) + 0.5px / var(--ios-scale, 1)) !important;
+}
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+  transform: translate(calc(16px / var(--ios-scale, 1)), calc(-16px / var(--ios-scale, 1))) !important;
+  width: 70% !important;
+}
+@media (min-width: 768px) {
+  [data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+    width: 158px !important;
+  }
+  [data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form:focus-within {
+    width: 202px !important;
+  }
+}
+.scratchpad-edge {
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
