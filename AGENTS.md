@@ -82,6 +82,10 @@
 
 音乐平台用的库钉死版本，不写 `^` 或 `~`：我们会替换或直接读其中一些库的内部文件，小版本变了也可能坏。每个平台用哪个库、版本钉在哪几处、上游变了怎么跟，见 `src/services/onlineMusic/UPSTREAMS.md`。
 
+### Shell backend (qq-music-api)
+
+iOS 壳里捆的 QQ 后端（`nodejs-project`，跑在 App 内 127.0.0.1:3212）不在这个仓库里——它来自壳 IPA，打 IPA 时由构建脚本（`~/workspace/folia-ios-inspect/build-lxN.py`）从壳的 stage 里带出来。lx19 起，构建脚本把壳里旧的 qq-music-api 3.1.4 换成仓库 `package.json` 钉的 3.3.6（从本仓库 `node_modules` 里整包拷过去，含它自带的嵌套 `node_modules/ws` 7.5.13），并把壳里 `zod` 从 4.6.5 升到 4.6.7（3.3.6 要 `^4.6.6`；壳里没有别的包用 zod）。原因是 3.1.4 没有 `POST /login/refresh`（3.3.2 才有），App 每小时的续期一直在 404，会话只能活约 3 天。3.3.6 自带 `GET /login/channels`（manifest 路由表），所以 `main.js` 里 2026-10-17 的那条路由补丁在构建时会被跳过（由脚本改 staged `main.js`，不是改仓库）；`configureAuthSessionRepository` 文件仓储补丁在 3.3.6 上接口和会话记录形状都没变，照旧工作。壳里 `nodejs-project/package.json` 不钉依赖版本，真实版本以 `node_modules` 为准。
+
 ## 代码定位
 
 按成本从低到高三层：先读 `docs/CODEMAP.md`（`npm run codemap` 从编译器和模块图生成，main 落地后由 `codemap-sync` workflow 重新生成，不会过期）；符号级问题默认用 rg；rg 拿不准时才用 `dev/mcp/ts-code-map/cli.mjs`。什么时候该升级见 `codebase-navigation`。
