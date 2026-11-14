@@ -1,7 +1,7 @@
 // src/services/lxFallback/lxFallback.ts
 // The LX fallback: when a native provider cannot produce an audio URL, or only
-// produces a trial clip (`preview`), three built-in LX scripts race in parallel
-// for a full one, and the first URL wins. It is installed on the omni audio hook,
+// produces a trial clip (`preview`), the one built-in LX script is asked for a
+// full one. It is installed on the omni audio hook,
 // so it only runs after the native provider has already answered; a full URL from
 // the provider is never bypassed, and a trial is only kept when no script has a
 // full one. A 'tx' song is never sent to the backends with its numeric id (one
@@ -29,7 +29,7 @@ const LX_SOURCE_BY_PROVIDER_ID: Record<string, LxSource | undefined> = {
 const LX_QUALITY = '320k';
 /**
  * One backend gets this long before it is out of the race. A backend fetch over a
- * VPN can take well over a second (Hbd measured ~1.7s cold), so the budget is
+ * VPN can take well over a second (measured ~1.7s cold on one backend), so the budget is
  * generous; the hook itself has no host timeout, and a slow URL still beats a toast.
  */
 const LX_BACKEND_TIMEOUT_MS = 2500;
@@ -153,7 +153,7 @@ const resolveViaScript = async (
     }
 };
 
-/** One playback URL from the three built-in scripts, or null when none has one. */
+/** One playback URL from the built-in script, or null when it has none. */
 export const resolveLxAudioUrl = async (song: SongResult): Promise<string | null> => {
     const startedAt = Date.now();
     const identity = await resolveLxSongIdentity(song);

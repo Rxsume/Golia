@@ -1,5 +1,5 @@
 // src/services/lxFallback/lxRuntime.ts
-// The LX script runtime: runs one third-party LX music-URL script (the three files under
+// The LX script runtime: runs one third-party LX music-URL script (the script file under
 // scripts/) in its own scope with an `lx` bridge, and asks it for a playback URL. This is
 // a TypeScript port of Golia's LXScriptSourceRunner (Beans), which runs these exact scripts
 // on iOS; the bridge surface, the request/response shapes and the URL extraction follow it
@@ -12,12 +12,10 @@ import {
     lxBufferOf, utf8ToBytes, type LxBuffer,
 } from './lxBytes';
 import { lxHttpRequest, type LxHttpResponse, type LxRequestOptions } from './lxHttp';
-import golia2Script from './scripts/Golia-2.js?raw';
-import hbdScript from './scripts/Hbd.js?raw';
-import v52Script from './scripts/v5-2.js?raw';
+import kuchaScript from './scripts/kucha-v3.js?raw';
 
 export type LxSource = 'wy' | 'tx' | 'kg';
-export type LxScriptId = 'v5-2' | 'hbd' | 'golia-2';
+export type LxScriptId = 'kucha-v3';
 
 export interface LxScriptDefinition {
     id: LxScriptId;
@@ -27,9 +25,7 @@ export interface LxScriptDefinition {
 }
 
 export const LX_SCRIPTS: readonly LxScriptDefinition[] = [
-    { id: 'v5-2', name: '酸甜贤', source: v52Script },
-    { id: 'hbd', name: 'GD', source: hbdScript },
-    { id: 'golia-2', name: 'Golia-2', source: golia2Script },
+    { id: 'kucha-v3', name: '裤衩', source: kuchaScript },
 ];
 
 /** The song identity handed to a script, in Golia's `musicInfo` shape. */

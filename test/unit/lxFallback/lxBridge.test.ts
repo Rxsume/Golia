@@ -1,6 +1,6 @@
 // The LX bridge end-to-end: a script that asks `lx.request` for a URL gets one back.
 // The network is stubbed (no live backend): the fetch the bridge falls back to
-// returns a canned Hbd-style answer.
+// returns a canned answer.
 (globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '0.7.28';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +12,7 @@ lx.on('request', async ({ action, source, info }) => {
     const musicInfo = info.musicInfo;
     const id = musicInfo.id || musicInfo.songmid || musicInfo.hash;
     const res = await new Promise((resolve, reject) => {
-        lx.request('https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=' + id + '&br=320', { method: 'GET' }, (err, resp) => {
+        lx.request('https://example.invalid/api.php?types=url&source=netease&id=' + id + '&br=320', { method: 'GET' }, (err, resp) => {
             if (err) reject(new Error(err.message || 'request failed'));
             else resolve(resp);
         });
@@ -35,7 +35,7 @@ describe('LxScriptRuntime bridge', () => {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
         })));
-        const runtime = new LxScriptRuntime({ id: 'hbd', name: 'hbd-test', source: MINIMAL_SCRIPT });
+        const runtime = new LxScriptRuntime({ id: 'kucha-v3', name: 'kucha-test', source: MINIMAL_SCRIPT });
         const url = await runtime.resolveMusicUrl('wy', {
             id: '1907766514',
             title: '11',

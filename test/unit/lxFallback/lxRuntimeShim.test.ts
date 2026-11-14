@@ -17,7 +17,7 @@ lx.send('inited', { status: true, openDevTools: false, sources: {} });
 describe('LxScriptRuntime shim isolation', () => {
     it('evaluating a script leaves the host Buffer intact', async () => {
         expect(typeof Buffer.concat).toBe('function');
-        const runtime = new LxScriptRuntime({ id: 'hbd', name: 'noop', source: NOOP_SCRIPT });
+        const runtime = new LxScriptRuntime({ id: 'kucha-v3', name: 'noop', source: NOOP_SCRIPT });
         await runtime.resolveMusicUrl('wy', { id: '1', title: 'x', artist: 'y', album: '', source: 'wy' } as never, '320k', 500);
         expect(typeof Buffer.concat).toBe('function');
         expect(typeof Buffer.from).toBe('function');
