@@ -81,7 +81,6 @@ export const PLATFORM_NAME_PLACES: Record<string, PlatformNamePlace> = {
     'src/services/localLibraryV8Migration.ts': { n: { netease: 3, qq: 1, kugou: 1 }, kind: 'stored', why: 'a migration of stored values' },
     'src/services/localMusicService.ts': { n: { netease: 7 }, kind: 'lyric', why: 'a local song\'s lyric match searches one source and stores its id' },
     'src/services/lxFallback/lxFallback.ts': { n: { netease: 1, qq: 1, kugou: 1 }, kind: 'question', why: 'the LX fallback maps a song\'s provider id to its LX source code' },
-    'src/services/lxFallback/scripts/fish-music-v1.9.0.js': { n: { qq: 1 }, kind: 'stored', why: 'a third-party LX script, byte-identical and never edited: the source names it sends and shows' },
     'src/services/lxFallback/scripts/helloworld.js': { n: { netease: 1, qq: 2, kugou: 1 }, kind: 'stored', why: 'a third-party LX script, byte-identical and never edited: the source names it sends and shows' },
     'src/services/lxFallback/scripts/huibq-v1.2.0.js': { n: { netease: 1, kugou: 1 }, kind: 'doc', why: 'a third-party LX script, patched once (sends the songmid for tx, rejects the backend no-link stub): the counts are only the patch comment\'s platform names' },
     'src/services/lxFallback/scripts/hywmusic-v1.2.0.js': { n: { qq: 1 }, kind: 'doc', why: 'a third-party LX script, byte-identical and never edited: the count is only a comment line\'s platform name' },   // comments only
