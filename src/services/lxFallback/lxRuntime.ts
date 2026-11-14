@@ -19,15 +19,16 @@ import molanScript from './scripts/molan-v2.3.6.js?raw';
 import helloworldScript from './scripts/helloworld.js?raw';
 import stellarwaveScript from './scripts/stellarwave-v4.0.2.js?raw';
 import xinghaiScript from './scripts/xinghai-v2.3.17.js?raw';
-// lx20: two more scripts from the monitor (AnhePlayer) list, probed 2026-11-15
-// with the two test songs and verified to return the right song, byte-identical
-// and never edited. lx-source covers both songs, hywmusic covers
-// the first one only; that is the order they are added below.
+// lx20: three more scripts from the monitor (AnhePlayer) list, probed 2026-11-15
+// with the two test songs, byte-identical and never edited. fish-music covers
+// both songs, hywmusic covers the first one only, lx-source is kept per user
+// decision (its probe verdict was unverified); that is the order they are added below.
 import lxSourceScript from './scripts/lx-source.js?raw';
+import fishMusicScript from './scripts/fish-music-v1.9.0.js?raw';
 import hywmusicScript from './scripts/hywmusic-v1.2.0.js?raw';
 
 export type LxSource = 'wy' | 'tx' | 'kg';
-export type LxScriptId = 'huibq' | 'kucha-v3' | 'molan' | 'helloworld' | 'stellarwave' | 'xinghai' | 'lx-source' | 'hywmusic';
+export type LxScriptId = 'huibq' | 'kucha-v3' | 'molan' | 'helloworld' | 'stellarwave' | 'xinghai' | 'lx-source' | 'fish-music' | 'hywmusic';
 
 export interface LxScriptDefinition {
     id: LxScriptId;
@@ -41,11 +42,12 @@ export interface LxScriptDefinition {
 // both test songs inside the 2500ms budget); the rest are backups. Huibq is
 // patched (see scripts/huibq-v1.2.0.js): it sends the songmid, not the
 // numeric id, for tx, and rejects the backend's 'no link' stub URL.
-// lx20 adds the two monitor scripts at the end, both-songs first, then
-// fastest: lx-source (both, first song in budget), hywmusic (first song only).
-// fish-music was dropped from lx20 before push: it also covered both songs,
-// but its probe resolve was 4.3-8s, over the 2500ms per-script hard timeout,
-// so it could never win the race in the App.
+// lx20 adds the three monitor scripts at the end, both-songs first, then
+// fastest: lx-source (both songs per probe, first in budget — kept per user
+// decision even though its probe verdict was unverified: audio only, no
+// media_mid, no ID3, and its 玩得 link embeds a different song's songmid),
+// fish-music (both songs, race 1049/1284ms, inside the 2500ms budget),
+// hywmusic (first song only).
 export const LX_SCRIPTS: readonly LxScriptDefinition[] = [
     { id: 'huibq', name: 'Huibq', source: huibqScript },
     { id: 'kucha-v3', name: '裤衩', source: kuchaScript },
@@ -54,6 +56,7 @@ export const LX_SCRIPTS: readonly LxScriptDefinition[] = [
     { id: 'stellarwave', name: '星澜', source: stellarwaveScript },
     { id: 'xinghai', name: '星海', source: xinghaiScript },
     { id: 'lx-source', name: 'LX Source', source: lxSourceScript },
+    { id: 'fish-music', name: 'fish-music', source: fishMusicScript },
     { id: 'hywmusic', name: 'HYWmusic', source: hywmusicScript },
 ];
 
