@@ -738,3 +738,37 @@ button.top-6.left-6.h-10.w-10 {
 [data-testid="panel-toggle"].dock-companion--panel.is-docked {
   translate: calc(var(--dock-edge-pad) - var(--dock-capsule-right) - 4px) calc(2px / var(--ios-scale, 1) - 12px) !important;
 }
+
+/* ══════════ 2026-11-14 lx9：搜索框再往左/下移 + 放大镜进框（用户 06:41 图） ══════════
+   第 1 项 — 搜索框位置：右移从 lx8 的 8px 减到 3px（再往左 5pt），上移从 13px 减到 8px
+     （再下移 5pt），即 translate(3px,−8px)。缩短幅度维持 lx6（手机 70%、桌面 158px、
+     聚焦 202px 可展开），本段不动宽度。
+   第 2 项 — 放大镜飘出框外：根因不是 flex 拉伸到行高（实测：grid 改 stretch 也只让
+     图标偏 1px），而是 form 本身被撑到约整栏高。凭据（图 1320×2868 @3x，scale 0.9，
+     布局 px = 图像 px ÷ 2.7）：框高约 32、上沿 13.7，图标中心 73.3，左缘与框左缘差 12px
+     （left-3 正确）；图标中心 = form 上沿 + form 高/2 → form 高 ≈ 2×(73.3−13.7) ≈ 119，
+     接近整栏 grid 高（约 139），远大于 input 的 34。图标的 top:50% 相对的是被撑大的
+     form，不是 input，所以落在框下约 43px 处；横向 left-3 不受影响，才显得只往下飘。
+     源码 + 构建产物 + 真机复现页（Chromium，dist CSS）都证实：无拉伸时 form 高 34、
+     图标与 input 中心分毫不差——拉伸来自 form 片段之外（壳注入的 scale.js / bootstrap.js
+     不在本仓库，无法直接定位），所以这里不赌拉伸来源，两道防线都只钉 form 自身：
+     (1) form 高度钉死为内容高（height: fit-content）：flex 的 stretch 只在 cross 尺寸
+         为 auto 时生效，有了定高就拉不长；align-self: flex-start 让框留在行首原位，
+         不会因定高后在高 cell 里垂直居中而下移。
+     (2) 图标 top 改钉 17px：input 高是钉死的 34（lx5 padding 上下 6px + text-sm 行高
+         20px + 上下边框 2px，全是不随 scale 变的扁平 px），中心就是 17px；图标高 16、
+         -mt-2（−8px）不动，上沿 9、中心 17，与 input 文本同一中心。top 用 px 而不用
+         50%，form 以后再被撑大也飘不出去；form 自身的 translate 位移（第 1 项）是整体
+         平移，框内相对位置不受影响。form 自带 transition-all，定高后首帧高度 120→34
+         有约 150ms 过渡，图标已钉 17px 不会跟着晃，框本身不动。
+     选择器 `form svg` 同时覆盖静止态 Search 与搜索中 Loader2（两者定位类相同）。
+     不动 Grid3D.tsx：CSS 已能钉死，源码的 top-1/2 + -mt-2 在 form 不被撑大时本就正确。 */
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form {
+  transform: translate(calc(3px / var(--ios-scale, 1)), calc(-8px / var(--ios-scale, 1))) !important;
+  height: fit-content !important;
+  align-self: flex-start !important;
+}
+[data-ponder-page-scope="grid-page"] > div > .grid.grid-cols-2 > .flex.justify-end > form svg {
+  top: 17px !important;
+  margin-top: -8px !important;
+}

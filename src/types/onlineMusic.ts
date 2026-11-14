@@ -1153,6 +1153,12 @@ export interface OnlineMusicProvider {
     /** 界面上显示的平台名（i18n key）；不给就用 shortName / displayName。名字由界面翻译。 */
     shortNameKey?: string;
     mark?: ProviderMark;
+    /**
+     * Joins the aggregated song search (`omni.searchAggregatedSongs`): one search asks this
+     * provider alongside the others that declare it, and the answers merge into one list.
+     * Left out where a provider's search is not part of that list.
+     */
+    aggregatedSearch?: boolean;
     getAvailability?(): ProviderAvailability;
     /**
      * What the provider watches for as long as the app is open (a local service of its own that
@@ -1197,6 +1203,18 @@ export type OmniProviderAvailability = ProviderAvailability;
 export type OmniProviderSummary = ProviderAccountSummary;
 export type OmniAccountState = ProviderAccountSummary;
 export type OmniPage<T> = ProviderPage<T>;
+/**
+ * What an aggregated song search found: the merged songs, the providers' totals added up
+ * (null where none of them said how many there are), whether any provider has another page,
+ * and where each provider's next page starts (only the providers that have one).
+ */
+export interface OmniAggregatedSearchPage {
+    items: UnifiedSong[];
+    total: number | null;
+    hasMore: boolean;
+    nextOffsets: Partial<Record<OmniProviderId, number>>;
+    providerHasMore: Partial<Record<OmniProviderId, boolean>>;
+}
 export type OmniAudioSource = ProviderAudioSource;
 export type OmniSongAvailability = ProviderSongAvailability;
 export type OmniSongReplacement = ProviderSongReplacement;

@@ -1594,6 +1594,7 @@ export default {
     "sourceNetease": "NetEase",
     "sourceLocal": "Lokal",
     "sourceNavidrome": "Navidrome",
+    "aggregatedSources": "Semua platform",
     "playTrack": "Putar trek",
     "error": "Pencarian gagal. Silakan coba lagi.",
     "retry": "Coba Lagi",

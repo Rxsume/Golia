@@ -40,6 +40,7 @@ describe('useSearchNavigationStore', () => {
             searchQuery: '',
             searchSourceTab: 'netease',
             searchKind: 'song',
+            aggregatedSearch: null,
             searchResults: null,
             collectionResults: null,
             resultTotal: null,
@@ -181,6 +182,51 @@ describe('useSearchNavigationStore', () => {
         expect(state.searchSourceTab).toBe('local');
         expect(state.searchResults).toHaveLength(1);
         expect(state.hasMore).toBe(false);
+    });
+
+    it('searches songs through the aggregated search and records where each provider stands', async () => {
+        cloudSearchMock.mockResolvedValueOnce({
+            result: {
+                songs: [{ id: 1, name: 'Track 1', artists: [], album: { id: 1, name: 'Album 1' }, durationMs: 1000 }],
+                songCount: 4,
+            },
+        } as any);
+
+        await useSearchNavigationStore.getState().submitSearch({
+            query: 'folio',
+            sourceTab: 'netease',
+            kind: 'song',
+            deps,
+        });
+
+        const state = useSearchNavigationStore.getState();
+        expect(cloudSearchMock).toHaveBeenCalledWith('folio', 30, 0);
+        expect(state.searchResults).toHaveLength(1);
+        expect(state.resultTotal).toBe(4);
+        expect(state.hasMore).toBe(true);
+        expect(state.aggregatedSearch).toEqual({ offsets: { netease: 1 }, hasMore: { netease: true } });
+    });
+
+    it('restores the aggregated paging with the cached results', async () => {
+        cloudSearchMock.mockResolvedValueOnce({
+            result: {
+                songs: [{ id: 1, name: 'Track 1', artists: [], album: { id: 1, name: 'Album 1' }, durationMs: 1000 }],
+                songCount: 4,
+            },
+        } as any);
+        await useSearchNavigationStore.getState().submitSearch({
+            query: 'folio',
+            sourceTab: 'netease',
+            kind: 'song',
+            deps,
+        });
+        useSearchNavigationStore.setState({ isSearchOpen: false, searchResults: null, aggregatedSearch: null });
+
+        useSearchNavigationStore.getState().restoreSearch({ query: 'folio', sourceTab: 'netease', kind: 'song' });
+
+        const state = useSearchNavigationStore.getState();
+        expect(state.searchResults).toHaveLength(1);
+        expect(state.aggregatedSearch).toEqual({ offsets: { netease: 1 }, hasMore: { netease: true } });
     });
 
     it('appends more netease results when loading the next page', async () => {

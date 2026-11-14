@@ -3,7 +3,10 @@ import { Disc, NotebookPen, Play, Plus, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { UnifiedSong } from '../../../types';
 import type { MediaId } from '../../../types/onlineMusic';
+import { omni } from '../../../services/onlineMusic/omni';
+import { PlatformMark } from '../../login/PlatformMark';
 import { formatSongName } from '../../../utils/songNameFormatter';
+import { getPlaybackSourceRef } from '../../../utils/appPlaybackGuards';
 import { getSizedCoverUrl } from '../../../utils/coverUrl';
 import { getSongTag, isSongUnavailable } from '../../../services/onlineMusic/songAvailability';
 import { canResolveSongCatalogRef } from '../../../services/onlineMusic/catalogRefs';
@@ -48,6 +51,9 @@ const SearchResultRow: React.FC<SearchResultRowProps> = ({
     const { t } = useTranslation();
     const isUnavailable = isSongUnavailable(track);
     const tag = getSongTag(track, { unavailable: t('status.songUnavailableTag'), video: t('status.songVideoTag') });
+    // 在线歌曲的来源平台：记号画在歌名前面，一眼看出是哪家的歌；本地与 Navidrome 的歌没有平台，不画。
+    const sourceRef = getPlaybackSourceRef(track);
+    const sourceProviderId = sourceRef.kind === 'online' ? sourceRef.providerId : null;
     const metadata = getProviderSongMetadata(track);
     const coverUrl = getSizedCoverUrl(metadata.coverUrl, 120);
     const artists = metadata.artists;
@@ -88,6 +94,16 @@ const SearchResultRow: React.FC<SearchResultRowProps> = ({
 
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
+                        {sourceProviderId && (
+                            <span
+                                title={omni.getProviderLabel(sourceProviderId)}
+                                role="img"
+                                aria-label={omni.getProviderLabel(sourceProviderId)}
+                                className="flex shrink-0"
+                            >
+                                <PlatformMark providerId={sourceProviderId} size={18} />
+                            </span>
+                        )}
                         <button
                             type="button"
                             disabled={isUnavailable}

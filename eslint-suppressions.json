@@ -9857,13 +9857,13 @@
       "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 119
+      "count": 97
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 28
+      "count": 25
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 244
+      "count": 212
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 10
@@ -9872,7 +9872,7 @@
       "count": 1
     },
     "@typescript-eslint/restrict-plus-operands": {
-      "count": 12
+      "count": 6
     },
     "@typescript-eslint/use-unknown-in-catch-callback-variable": {
       "count": 1

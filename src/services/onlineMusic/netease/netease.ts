@@ -1185,11 +1185,23 @@ export const neteaseApi = {
   // The timestamp is there because the API server answers a repeated address from its cache for
   // two minutes: without it a like made in NetEase's own app would not be in the answer for that long.
   getLikedSongs: async (uid: number) => {
-    return fetchWithCreds(`/likelist?uid=${uid}&timestamp=${Date.now()}`);
+    if (await hasConfiguredApiBase()) {
+      return fetchWithCreds(`/likelist?uid=${uid}&timestamp=${Date.now()}`);
+    }
+    // Direct weapi (module/likelist.js): the same body the backend forwards. Without a
+    // sign-in the platform answers 301, which the provider reads as auth-required.
+    return requestNeteaseWeapi('song/like/get', { uid });
   },
 
   getUserPlaylists: async (uid: number, limit = 50, offset = 0) => {
-    const res = await fetchWithCreds(`/user/playlist?uid=${uid}&limit=${limit}&offset=${offset}`);
+    // Direct weapi (module/user_playlist.js): the same body the backend forwards, so the
+    // provider reads the same `playlist` array either way. This is the call the account
+    // sync stands on (accountRead.ts): without it every sync in the shell fails with
+    // NETEASE_API_BASE_MISSING (lx9, verified live 2026-11-14: uid 306805682 answers
+    // code 200 with 4 playlists, the first its "我喜欢的音乐", specialType 5).
+    const res = (await hasConfiguredApiBase())
+      ? await fetchWithCreds(`/user/playlist?uid=${uid}&limit=${limit}&offset=${offset}`)
+      : await requestNeteaseWeapi('user/playlist', { uid, limit, offset, includeVideo: true });
     if (res.playlist) {
       res.playlist.forEach((p: any) => {
         p.coverImgUrl = toHttps(p.coverImgUrl);
@@ -1355,11 +1367,19 @@ export const neteaseApi = {
   // The account's listening ranking (`/user/record`): type 1 is the last week (`weekData`), 0 all
   // time (`allData`), each row `{ playCount, score, song }`. It comes whole, without pages.
   getUserRecord: async (uid: number, type: 0 | 1) => {
-    return fetchWithCreds(`/user/record?uid=${uid}&type=${type}`);
+    if (await hasConfiguredApiBase()) {
+      return fetchWithCreds(`/user/record?uid=${uid}&type=${type}`);
+    }
+    // Direct weapi (module/user_record.js): the listening ranking the sync reads.
+    return requestNeteaseWeapi('v1/play/record', { uid, type });
   },
 
   getUserCloud: async (limit = 200, offset = 0) => {
-    const res = await fetchWithCreds(`/user/cloud?limit=${limit}&offset=${offset}`);
+    // Direct weapi (module/user_cloud.js): the cloud entry the sync reads. Without a
+    // sign-in the platform answers 301, which reads as an empty cloud here.
+    const res = (await hasConfiguredApiBase())
+      ? await fetchWithCreds(`/user/cloud?limit=${limit}&offset=${offset}`)
+      : await requestNeteaseWeapi('v1/cloud/get', { limit, offset });
     const normalizedSongs = (res.data || []).map((item: any) => normalizeSongResult({
       ...item,
       t: item?.t ?? 1,
@@ -1418,6 +1438,15 @@ export const neteaseApi = {
   // and returns 3 tracks either way (measured). The queue controller's near-end refill is what
   // keeps the stream going, exactly as it does for the plain FM endpoint.
   getPersonalFm: async (options?: PersonalFmRequestOptions) => {
+    if (!(await hasConfiguredApiBase())) {
+      // Direct weapi (module/personal_fm.js, personal_fm_mode.js): the mode rides in the
+      // same /v1/radio/get call the backend uses, so the selected mode is kept. Verified
+      // live 2026-11-14 (anonymous: code 200, one song in data).
+      const mode = options?.mode;
+      return requestNeteaseWeapi('v1/radio/get', !mode || mode === 'DEFAULT'
+        ? {}
+        : { mode, ...(mode === 'SCENE_RCMD' && options.submode ? { submode: options.submode } : {}), limit: 3 });
+    }
     const fetchDefaultFm = () => fetchWithCreds(`/personal_fm?timestamp=${Date.now()}`);
     const mode = options?.mode;
     if (!mode || mode === 'DEFAULT') {
@@ -1442,7 +1471,13 @@ export const neteaseApi = {
   },
 
   getDailyRecommendedSongs: async (afresh = false) => {
-    const res = await fetchWithCreds(`/recommend/songs?afresh=${afresh}&timestamp=${Date.now()}`);
+    // Direct weapi (module/recommend_songs.js): the same body the backend forwards, with the
+    // songs in data.dailySongs. One of the three home-feed sections: without it the home
+    // "推荐" tab has no daily songs in the shell (lx9, verified live 2026-11-14, anonymous:
+    // code 200, 30 songs in data.dailySongs).
+    const res = (await hasConfiguredApiBase())
+      ? await fetchWithCreds(`/recommend/songs?afresh=${afresh}&timestamp=${Date.now()}`)
+      : await requestNeteaseWeapi('v3/discovery/recommend/songs', { afresh });
     const rawSongs = res.data?.dailySongs || res.data?.songs || res.recommendData?.dailySongs || res.songs || [];
     return {
       ...res,
@@ -1500,7 +1535,12 @@ export const neteaseApi = {
   ),
 
   getPersonalizedPlaylists: async (limit = 35) => {
-    return fetchWithCreds(`/personalized?limit=${limit}`);
+    if (await hasConfiguredApiBase()) {
+      return fetchWithCreds(`/personalized?limit=${limit}`);
+    }
+    // Direct weapi (module/personalized.js): the recommended playlists of the home feed.
+    // Verified live 2026-11-14 (anonymous: code 200, 35 entries in result).
+    return requestNeteaseWeapi('personalized/playlist', { limit, total: true, n: 1000 });
   },
 
   // --- Explore ---

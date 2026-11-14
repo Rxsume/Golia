@@ -1594,6 +1594,7 @@ export default {
     "sourceNetease": "NetEase",
     "sourceLocal": "Local",
     "sourceNavidrome": "Navidrome",
+    "aggregatedSources": "All platforms",
     "playTrack": "Play track",
     "error": "Search failed. Please try again.",
     "retry": "Retry",

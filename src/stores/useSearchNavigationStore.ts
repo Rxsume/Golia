@@ -9,7 +9,7 @@ import {
     type LocalLibraryDisplayCatalog,
 } from '../services/playbackAdapters';
 import { omni } from '../services/onlineMusic/omni';
-import { isLocalPlaybackSong, isNavidromePlaybackSong } from '../utils/appPlaybackGuards';
+import { getPlaybackSongKey, isLocalPlaybackSong, isNavidromePlaybackSong } from '../utils/appPlaybackGuards';
 
 const LAST_HOME_VIEW_TAB_KEY = 'last_home_view_tab';
 const DEFAULT_SEARCH_LIMIT = 30;
@@ -32,6 +32,14 @@ type SearchExecutionResult = {
     hasMore: boolean;
     nextOffset: number;
     total?: number;
+    /** 聚合单曲搜索时各平台的翻页位置；单平台、本地与 Navidrome 搜索没有。 */
+    aggregated?: AggregatedSearchProgress;
+};
+
+/** 聚合单曲搜索进行到哪：每个平台下一页的起点，和它还有没有下一页。 */
+type AggregatedSearchProgress = {
+    offsets: Partial<Record<OnlineProviderId, number>>;
+    hasMore: Partial<Record<OnlineProviderId, boolean>>;
 };
 
 type SearchCacheEntry = {
@@ -41,6 +49,7 @@ type SearchCacheEntry = {
     hasMore: boolean;
     total: number | null;
     scrollTop: number;
+    aggregated?: AggregatedSearchProgress;
 };
 
 interface SearchNavigationState {
@@ -50,6 +59,8 @@ interface SearchNavigationState {
     submittedQuery: string;
     searchSourceTab: SearchSource;
     searchKind: SearchKind;
+    /** 聚合单曲搜索进行到哪（各平台下一页的起点）；不是聚合搜索时是 null。 */
+    aggregatedSearch: AggregatedSearchProgress | null;
     searchResults: UnifiedSong[] | null;
     /** 搜专辑、歌单时的结果（searchKind 不是 'song'）；还没搜过是 null。 */
     collectionResults: OmniCollection[] | null;
@@ -84,6 +95,11 @@ interface SearchNavigationState {
 const getSearchCacheKey = (query: string, sourceTab: SearchSource, kind: SearchKind) => (
     `${sourceTab}:${kind}:${query.trim().toLowerCase()}`
 );
+
+// A cache lookup misses: the entry is there or it is not. (A `const` annotated with
+// `| undefined` does not keep the miss: its initializer narrows it back to the entry,
+// so the lookup goes through a function whose declared return type keeps it.)
+const cachedSearchEntry = (cache: Record<string, SearchCacheEntry>, key: string): SearchCacheEntry | undefined => cache[key];
 
 /** 这个来源能搜的种类：在线平台问 omni，本地与 Navidrome 只有单曲。单曲总在第一个。 */
 export const getSearchKinds = (sourceTab: SearchSource): SearchKind[] => {
@@ -172,14 +188,23 @@ const searchNavidromeSongs = async (query: string): Promise<SearchExecutionResul
     };
 };
 
-const searchOnlineProviderSongs = async (
-    providerId: OnlineProviderId,
+// 在线单曲搜索一次问所有聚合平台（omni.searchAggregatedSongs），结果并进一个列表。
+// 专辑、歌单仍按平台分着搜（searchOnlineProviderCollections），不在聚合里。
+const searchAggregatedOnlineSongs = async (
     query: string,
     limit: number,
-    offset: number,
+    offsets: Partial<Record<OnlineProviderId, number>>,
 ): Promise<SearchExecutionResult> => {
-    const page = await omni.searchProviderSongs(providerId, query, { limit, offset });
-    return { results: page.items, collections: [], hasMore: page.hasMore, nextOffset: page.nextOffset, total: page.total };
+    const page = await omni.searchAggregatedSongs(query, limit, offsets);
+    return {
+        results: page.items,
+        collections: [],
+        hasMore: page.hasMore,
+        // 单个 offset 只是这一页拿到的条数：加载更多不看它，看 aggregated.offsets。
+        nextOffset: page.items.length,
+        total: page.total ?? undefined,
+        aggregated: { offsets: page.nextOffsets, hasMore: page.providerHasMore },
+    };
 };
 
 const searchOnlineProviderCollections = async (
@@ -203,7 +228,8 @@ const executeSearch = async (
     kind: SearchKind,
     offset: number,
     limit: number,
-    deps: SearchExecutorDeps
+    deps: SearchExecutorDeps,
+    aggregatedOffsets: Partial<Record<OnlineProviderId, number>> = {},
 ): Promise<SearchExecutionResult> => {
     if (sourceTab === 'local') {
         return searchLocalSongs(deps, query);
@@ -214,8 +240,20 @@ const executeSearch = async (
     }
 
     return kind === 'song'
-        ? searchOnlineProviderSongs(sourceTab, query, limit, offset)
+        ? searchAggregatedOnlineSongs(query, limit, aggregatedOffsets)
         : searchOnlineProviderCollections(sourceTab, kind, query, limit, offset);
+};
+
+// 一首歌在列表里只留一条（同一平台同一首歌翻页时重复出现）；不同平台的同一首歌是不同条目，
+// 键里带平台，各自留着（getPlaybackSongKey）。
+const dedupeSongs = (songs: UnifiedSong[]): UnifiedSong[] => {
+    const seen = new Set<string>();
+    return songs.filter(song => {
+        const key = getPlaybackSongKey(song);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 };
 
 const getInitialHomeViewTab = (): HomeViewTab => {
@@ -234,6 +272,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
     submittedQuery: '',
     searchSourceTab: DEFAULT_ONLINE_PROVIDER_ID,
     searchKind: 'song',
+    aggregatedSearch: null,
     searchResults: null,
     collectionResults: null,
     resultTotal: null,
@@ -272,7 +311,9 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
     // 旧的历史记录没有 kind：按当前的种类恢复。requestId 往前走一格：还在途的搜索或加载更多晚到时不再写进恢复出来的这一组。
     restoreSearch: ({ query, sourceTab, kind, returnView = 'home' }) => set(state => {
         const searchKind = resolveSearchKind(sourceTab, kind ?? state.searchKind);
-        const cached = state.searchCache[getSearchCacheKey(query, sourceTab, searchKind)];
+        const cacheKey = getSearchCacheKey(query, sourceTab, searchKind);
+        const cached = state.searchCache[cacheKey];
+        const aggregated = cachedSearchEntry(state.searchCache, cacheKey)?.aggregated ?? null;
         return {
             requestId: state.requestId + 1,
             searchQuery: query,
@@ -282,6 +323,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
             searchReturnView: returnView,
             searchResults: cached?.results ?? null,
             collectionResults: cached?.collections ?? null,
+            aggregatedSearch: aggregated,
             resultTotal: cached?.total ?? null,
             offset: cached?.offset ?? 0,
             hasMore: cached?.hasMore ?? false,
@@ -299,6 +341,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         set({
             searchSourceTab: fallback,
             searchKind: resolveSearchKind(fallback, state.searchKind),
+            aggregatedSearch: null,
             searchResults: null,
             collectionResults: null,
             resultTotal: null,
@@ -331,6 +374,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
             isLoadingMore: false,
             searchError: null,
             requestId,
+            aggregatedSearch: null,
             searchResults: null,
             collectionResults: null,
             resultTotal: null,
@@ -354,6 +398,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
                 hasMore: result.hasMore,
                 offset: result.nextOffset,
                 isSearching: false,
+                aggregatedSearch: result.aggregated ?? null,
                 // 上一组结果的列表卸载时会把它的滚动位置写回来（SearchResultsList 的 cleanup）：新结果从顶上开始。
                 scrollTop: 0,
                 searchCache: {
@@ -365,6 +410,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
                         offset: result.nextOffset,
                         total,
                         scrollTop: 0,
+                        aggregated: result.aggregated,
                     },
                 },
             }));
@@ -381,6 +427,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
                 hasMore: false,
                 offset: 0,
                 isSearching: false,
+                aggregatedSearch: null,
                 scrollTop: 0,
                 searchError: error instanceof Error ? error.message : 'search_failed',
             });
@@ -393,6 +440,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
             submittedQuery: searchQuery,
             searchSourceTab,
             searchKind,
+            aggregatedSearch,
             searchResults,
             collectionResults,
             hasMore,
@@ -417,30 +465,35 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         set({ isLoadingMore: true, searchError: null });
 
         try {
-            const result = await executeSearch(searchQuery, searchSourceTab, searchKind, offset, limit, deps);
+            // 聚合搜索按各平台自己的起点翻页（aggregatedSearch.offsets），不是单个 offset。
+            const result = await executeSearch(searchQuery, searchSourceTab, searchKind, offset, limit, deps, aggregatedSearch?.offsets ?? {});
             if (get().requestId !== requestId) {
                 return;
             }
             set(state => {
-                const results = [...(searchResults || []), ...result.results];
+                const results = dedupeSongs([...(searchResults || []), ...result.results]);
                 const collections = [...(collectionResults || []), ...result.collections];
                 const total = totalOf(result) ?? state.resultTotal;
+                // 聚合搜索的 offset 是合并后的列表已经拿到的条数；专辑、歌单仍是平台给的下一页起点。
+                const offset = result.aggregated ? results.length : result.nextOffset;
                 return {
                     searchResults: results,
                     collectionResults: collections,
                     resultTotal: total,
                     hasMore: result.hasMore,
-                    offset: result.nextOffset,
+                    offset,
                     isLoadingMore: false,
+                    aggregatedSearch: result.aggregated ?? null,
                     searchCache: {
                         ...state.searchCache,
                         [getSearchCacheKey(searchQuery, searchSourceTab, searchKind)]: {
                             results,
                             collections,
                             hasMore: result.hasMore,
-                            offset: result.nextOffset,
+                            offset,
                             total,
                             scrollTop: state.scrollTop,
+                            aggregated: result.aggregated,
                         },
                     },
                 };

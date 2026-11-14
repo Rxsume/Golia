@@ -378,6 +378,7 @@ export const neteaseProvider: OnlineMusicProvider = {
     shortName: '网易云',
     shortNameKey: 'onlineProviderName.netease',
     mark: { letter: '云', color: '#dc2626' },
+    aggregatedSearch: true,
     watch: watchNeteaseLocalService,
     describeFailure: describeNeteaseFailure,
     getAvailability: () => ({ configured: true }),

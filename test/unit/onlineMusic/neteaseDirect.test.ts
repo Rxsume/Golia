@@ -140,4 +140,140 @@ describe('NetEase direct transport (no backend configured)', () => {
             expect.anything(),
         );
     });
+
+    it('reads the account playlists straight from the platform (lx9)', async () => {
+        // Shape of the live answer, 2026-11-14 (uid 306805682, anonymous: code 200,
+        // 4 playlists, the first its "我喜欢的音乐", specialType 5).
+        const request = nativeRequest({
+            'music.163.com/weapi/user/playlist': JSON.stringify({
+                code: 200,
+                more: false,
+                playlist: [{
+                    id: 425829857, name: 'gumson喜欢的音乐', specialType: 5,
+                    coverImgUrl: 'https://p1.music.126.net/cover.jpg',
+                    creator: { userId: 306805682, nickname: 'gumson', avatarUrl: 'https://p1.music.126.net/avatar.jpg' },
+                }],
+            }),
+        });
+        const fetchMock = vi.fn().mockRejectedValue(new Error('fetch must not be called'));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getUserPlaylists(306805682, 50, 0);
+        expect(res.playlist).toHaveLength(1);
+        expect(res.playlist[0]).toMatchObject({ name: 'gumson喜欢的音乐', specialType: 5 });
+        const sent = request.mock.calls[0][0] as unknown as { url: string; method: string; data: string };
+        expect(sent.url).toBe('https://music.163.com/weapi/user/playlist');
+        expect(sent.method).toBe('POST');
+        // weapi: the body is the encrypted params pair, not a plain query string.
+        expect(sent.data).toContain('params=');
+        expect(sent.data).toContain('encSecKey=');
+        // No backend is configured, so the backend fetch is never touched.
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reads the liked songs straight from the platform (lx9)', async () => {
+        const request = nativeRequest({
+            'music.163.com/weapi/song/like/get': JSON.stringify({ code: 200, ids: [186016, 123456] }),
+        });
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getLikedSongs(306805682);
+        expect(res.ids).toEqual([186016, 123456]);
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://music.163.com/weapi/song/like/get',
+            method: 'POST',
+        }));
+    });
+
+    it('reads the daily recommendations straight from the platform (lx9)', async () => {
+        // Shape of the live answer, 2026-11-14 (anonymous: code 200, 30 songs in data.dailySongs).
+        const request = nativeRequest({
+            'music.163.com/weapi/v3/discovery/recommend/songs': JSON.stringify({
+                code: 200,
+                data: {
+                    dailySongs: [{
+                        id: 186016, name: '晴天',
+                        ar: [{ id: 6452, name: '周杰伦' }],
+                        al: { id: 8220, name: '叶惠美', picUrl: 'https://p1.music.126.net/cover.jpg' },
+                        dt: 269000, fee: 8,
+                    }],
+                },
+            }),
+        });
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getDailyRecommendedSongs(false);
+        expect(res.songs).toHaveLength(1);
+        expect(res.songs[0]).toMatchObject({ name: '晴天' });
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://music.163.com/weapi/v3/discovery/recommend/songs',
+            method: 'POST',
+        }));
+    });
+
+    it('reads private FM straight from the platform (lx9)', async () => {
+        const request = nativeRequest({
+            'music.163.com/weapi/v1/radio/get': JSON.stringify({
+                code: 200,
+                data: [{
+                    id: 186016, name: '晴天',
+                    ar: [{ id: 6452, name: '周杰伦' }],
+                    al: { id: 8220, name: '叶惠美', picUrl: 'https://p1.music.126.net/cover.jpg' },
+                    dt: 269000, fee: 8,
+                }],
+            }),
+        });
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getPersonalFm();
+        expect(res.data).toHaveLength(1);
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://music.163.com/weapi/v1/radio/get',
+            method: 'POST',
+        }));
+    });
+
+    it('reads the recommended playlists straight from the platform (lx9)', async () => {
+        // Shape of the live answer, 2026-11-14 (anonymous: code 200, 35 entries in result).
+        const request = nativeRequest({
+            'music.163.com/weapi/personalized/playlist': JSON.stringify({
+                code: 200,
+                result: [{ id: 1, name: '推荐歌单', picUrl: 'https://p1.music.126.net/cover.jpg' }],
+            }),
+        });
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getPersonalizedPlaylists(35);
+        expect(res.result).toHaveLength(1);
+        expect(res.result[0]).toMatchObject({ name: '推荐歌单' });
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://music.163.com/weapi/personalized/playlist',
+            method: 'POST',
+        }));
+    });
+
+    it('still uses the backend for the account playlists when one is configured (lx9)', async () => {
+        vi.stubEnv('VITE_NETEASE_API_BASE', 'https://netease.example.test');
+        storage.set('online_provider:netease:cookie', 'MUSIC_U=test-cookie');
+        const fetchMock = vi.fn().mockResolvedValue(Response.json({
+            code: 200,
+            playlist: [{ id: 425829857, name: 'gumson喜欢的音乐', specialType: 5 }],
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getUserPlaylists(306805682, 50, 0);
+        expect(res.playlist).toHaveLength(1);
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('https://netease.example.test/user/playlist?uid=306805682'),
+            expect.anything(),
+        );
+    });
 });

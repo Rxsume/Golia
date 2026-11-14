@@ -809,15 +809,116 @@ describe('KuGou direct transport (no backend configured)', () => {
         expect(sentLyric.url).toContain('id=175308623');
     });
 
-    it('still refuses operations with no direct route when no backend is configured (lx8)', async () => {
+    it('still refuses operations with no direct route when no backend is configured (lx9)', async () => {
         const request = nativeRequest({});
         stubNativeShell(request);
         const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
 
-        await expect(requestKugou('user_playlist', { userid: '9' })).rejects.toMatchObject({
+        await expect(requestKugou('user_cloud', { userid: '9' })).rejects.toMatchObject({
             code: 'unavailable',
             message: 'VITE_KUGOU_API_BASE is not configured',
         });
         expect(request).not.toHaveBeenCalled();
+    });
+
+    it('reads the account playlists straight from the platform (lx9)', async () => {
+        const request = nativeRequest({
+            'gateway.kugou.com/v7/get_all_list': JSON.stringify({
+                status: 1, error_code: 0,
+                data: {
+                    lists: [{ global_collection_id: '123', listname: '我喜欢', list_create_listid: '2' }],
+                },
+            }),
+        });
+        directStorage.set('online_provider:kugou:token', 'tok');
+        directStorage.set('online_provider:kugou:userid', '123');
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const body = await requestKugou('user_playlist', { userid: '123', page: 1, pagesize: 30 });
+        expect(asRecord(asRecord(body)?.data)?.lists).toHaveLength(1);
+        const sent = request.mock.calls[0][0] as { url: string; method: string; headers: Record<string, string>; data: string };
+        expect(sent.method).toBe('POST');
+        expect(sent.url).toContain('https://gateway.kugou.com/v7/get_all_list');
+        expect(sent.url).toContain('signature=');
+        expect(sent.url).toContain('plat=1');
+        expect(sent.url).toContain('userid=123');
+        expect(sent.headers['x-router']).toBe('cloudlist.service.kugou.com');
+        expect(JSON.parse(sent.data)).toMatchObject({ total_ver: 979, type: 2, page: 1, pagesize: 30 });
+    });
+
+    it('throws when the account playlists are refused (lx9)', async () => {
+        // Shape of the live answer, 2026-11-14 (anonymous: status 0, error_code 20010).
+        const request = nativeRequest({
+            'gateway.kugou.com/v7/get_all_list': JSON.stringify({ status: 0, error_code: 20010, data: {} }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        await expect(requestKugou('user_playlist', { userid: '123', page: 1, pagesize: 30 })).rejects.toMatchObject({
+            code: 'network',
+            message: 'KuGou direct request failed: 20010',
+        });
+    });
+
+    it('reads private FM straight from the platform (lx9)', async () => {
+        // Shape of the live answer, 2026-11-14 (anonymous: status 1, error_code 0, songs under data.song_list).
+        const request = nativeRequest({
+            'gateway.kugou.com/v2/personal_recommend': JSON.stringify({
+                status: 1, error_code: 0,
+                data: { song_list: [{ hash: 'ABC', songname: '晴天', author_name: '周杰伦' }] },
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const body = await requestKugou('personal_fm');
+        expect(asRecord(asRecord(body)?.data)?.song_list).toHaveLength(1);
+        const sent = request.mock.calls[0][0] as { url: string; method: string; headers: Record<string, string>; data: string };
+        expect(sent.method).toBe('POST');
+        expect(sent.url).toContain('https://gateway.kugou.com/v2/personal_recommend');
+        expect(sent.url).toContain('signature=');
+        expect(sent.headers['x-router']).toBe('persnfm.service.kugou.com');
+        expect(JSON.parse(sent.data)).toMatchObject({ action: 'play', platform: 'ios', mode: 'normal' });
+        expect(JSON.parse(sent.data).key).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    it('reads a recommendation card straight from the platform (lx9)', async () => {
+        // Shape of the live answer, 2026-11-14 (card 3005, anonymous: status 1, error_code 0).
+        const request = nativeRequest({
+            'gateway.kugou.com/youth/v1/song/single_card_recommend': JSON.stringify({
+                status: 1, error_code: 0,
+                data: { song_list: [{ hash: 'ABC', songname: '晴天' }], card_info: { card_name: '潮流尝鲜' } },
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const body = await requestKugou('top_card_youth', { card_id: 3005, pagesize: 30 });
+        expect(asRecord(asRecord(body)?.data)?.song_list).toHaveLength(1);
+        const sent = request.mock.calls[0][0] as { url: string; method: string };
+        expect(sent.method).toBe('POST');
+        expect(sent.url).toContain('https://gateway.kugou.com/youth/v1/song/single_card_recommend');
+        expect(sent.url).toContain('card_id=3005');
+        expect(sent.url).toContain('signature=');
+    });
+
+    it('reads playlist tracks straight from the platform (lx9)', async () => {
+        const request = nativeRequest({
+            'gateway.kugou.com/pubsongs/v2/get_other_list_file_nofilt': JSON.stringify({
+                status: 1, error_code: 0,
+                data: { lists: [{ hash: 'ABC', songname: '晴天' }] },
+            }),
+        });
+        stubNativeShell(request);
+        const { requestKugou } = await import('@/services/onlineMusic/kugou/kugouTransport');
+
+        const body = await requestKugou('playlist_track_all', { id: '123', page: 1, pagesize: 100 });
+        expect(asRecord(asRecord(body)?.data)?.lists).toHaveLength(1);
+        const sent = request.mock.calls[0][0] as { url: string; method: string };
+        expect(sent.method).toBe('GET');
+        expect(sent.url).toContain('https://gateway.kugou.com/pubsongs/v2/get_other_list_file_nofilt');
+        expect(sent.url).toContain('global_collection_id=123');
+        expect(sent.url).toContain('signature=');
     });
 });

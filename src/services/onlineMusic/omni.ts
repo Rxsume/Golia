@@ -8,6 +8,7 @@ import type {
     DailyStyleSongs,
     LoginStep,
     MediaId,
+    OmniAggregatedSearchPage,
     OmniAudioSource,
     OmniChorusRange,
     OmniCollection,
@@ -56,7 +57,7 @@ import type {
 import { resolveProviderLyricsChorus } from '../../utils/lyrics/chorusResolver';
 import { DEFAULT_ONLINE_PROVIDER_ID, OnlineProviderError } from '../../types/onlineMusic';
 import { useOnlineProviderAccountStore } from '../../stores/useOnlineProviderAccountStore';
-import { getPlaybackSourceRef } from '../../utils/appPlaybackGuards';
+import { getPlaybackSourceRef, getPlaybackSongKey } from '../../utils/appPlaybackGuards';
 import { toSafePlaybackUrl } from '../../utils/appPlaybackHelpers';
 import { saveSongReplayGain } from './resourceCache';
 import {
@@ -240,6 +241,38 @@ const emptyPage = <T>(offset: number): OmniPage<T> => ({ items: [], hasMore: fal
 // (the platform's count of plays) and an artist's every song (`artist_songs`, #918). Nobody edits
 // or saves them; their id is not a playlist's.
 const isReadOnlyListType = (type: string): boolean => type === 'listening_rank' || type === 'artist_songs';
+
+// A provider whose availability cannot be read is not asked: the aggregated search only
+// asks providers that are set up (the same rule the search page lists sources by). A
+// provider with no `getAvailability` counts as set up.
+const isProviderConfigured = (provider: OnlineMusicProvider): boolean => {
+    try {
+        return provider.getAvailability?.().configured !== false;
+    } catch {
+        return false;
+    }
+};
+
+// The songs of several providers' pages, one round each in turn, so every provider's best
+// matches stand near the top instead of one provider's whole page coming first. A song a
+// provider answers twice is kept once; the same song from another provider is another
+// entry, and plays through its own provider (its key names the provider).
+const interleaveSongs = (pages: readonly UnifiedSong[][]): UnifiedSong[] => {
+    const seen = new Set<string>();
+    const merged: UnifiedSong[] = [];
+    const longest = pages.reduce((longest, page) => Math.max(longest, page.length), 0);
+    for (let index = 0; index < longest; index += 1) {
+        for (const page of pages) {
+            if (index >= page.length) continue;
+            const song = page[index];
+            const key = getPlaybackSongKey(song);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(song);
+        }
+    }
+    return merged;
+};
 
 // A search with the caller's context (`ProviderSearchContext`) where it gave one, handed on as it
 // is; a search without one reaches the provider as the host's own searches always have.
@@ -615,6 +648,61 @@ export const omni = {
         const provider = requireOnlineMusicProvider(providerId);
         if (!providerSupports(provider, 'search') || !provider.search) return emptyPage(page.offset);
         return searchWith(provider.search, query, page, context);
+    },
+
+    // Asks every provider that joins the aggregated search, at once, and merges the answers
+    // into one list (`interleaveSongs`). A provider that is not set up is not asked; one that
+    // fails is skipped with a warning, and the others' songs still come back. `offsets` pages
+    // on: empty asks every provider from the start, and a non-empty one asks only the
+    // providers it names, at the offsets it gives — so the caller hands back the previous
+    // `nextOffsets` and a provider with no page left is not asked again.
+    async searchAggregatedSongs(
+        query: string,
+        limit: number,
+        offsets: Partial<Record<OmniProviderId, number>> = {},
+        context?: ProviderSearchContext,
+    ): Promise<OmniAggregatedSearchPage> {
+        const searches = listOnlineMusicProviders().flatMap(provider => {
+            const search = provider.search;
+            if (!provider.aggregatedSearch
+                || !providerSupports(provider, 'search')
+                || !search
+                || !isProviderConfigured(provider)
+                || (Object.keys(offsets).length > 0 && offsets[provider.id] === undefined)) return [];
+            return [{ provider, search }];
+        });
+        const settled: { provider: OnlineMusicProvider; page: OmniPage<UnifiedSong> | null; error: unknown }[] = await Promise.all(searches.map(async ({ provider, search }) => {
+            try {
+                const page = await searchWith(search, query, { limit, offset: offsets[provider.id] ?? 0 }, context);
+                return { provider, page, error: null };
+            } catch (error) {
+                console.warn('[Omni] Aggregated search skipped a provider', { providerId: provider.id }, error);
+                return { provider, page: null, error };
+            }
+        }));
+        const answered = settled.filter((entry): entry is { provider: OnlineMusicProvider; page: OmniPage<UnifiedSong>; error: unknown } => entry.page !== null);
+        // Every provider that was asked failed: the search itself failed (the caller shows its
+        // retry), instead of looking like a search with no matches. The first failure is the
+        // error, as it was.
+        if (answered.length === 0 && settled.length > 0) {
+            const firstError = settled[0].error;
+            if (firstError instanceof Error) throw firstError;
+            throw new Error('Aggregated search failed');
+        }
+        const total = answered.reduce((sum, { page }) => sum + (page.total ?? 0), 0);
+        const nextOffsets: Partial<Record<OmniProviderId, number>> = {};
+        const providerHasMore: Partial<Record<OmniProviderId, boolean>> = {};
+        for (const { provider, page } of answered) {
+            providerHasMore[provider.id] = page.hasMore;
+            if (page.hasMore) nextOffsets[provider.id] = page.nextOffset;
+        }
+        return {
+            items: interleaveSongs(answered.map(({ page }) => page.items)),
+            total: answered.some(({ page }) => typeof page.total === 'number') ? total : null,
+            hasMore: answered.some(({ page }) => page.hasMore),
+            nextOffsets,
+            providerHasMore,
+        };
     },
 
     // What the provider's search finds: songs wherever it searches, albums and playlists where it has

@@ -89,9 +89,12 @@ export const KUGOU_API_BASE_MISSING = 'VITE_KUGOU_API_BASE is not configured';
 // shell has a native bridge: the QR sign-in (its upstream endpoints take a signed GET) and the
 // account read the sign-in ends with, plus the daily recommendations (an Android-signed POST
 // to the gateway, routed to the daily-recommendation service), plus the lyric lookup and
-// download (the platform's public lyric hosts, no signature or cookie needed). Everything
-// else still needs the configured backend.
-const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail', 'everyday_recommend', 'search_lyric', 'lyric']);
+// download (the platform's public lyric hosts, no signature or cookie needed), plus the
+// account sync and the home feed (lx9): the account's playlists (user_playlist, the call the
+// sync stands on), private FM (personal_fm) and the recommendation cards (top_card_youth),
+// and one playlist's tracks (playlist_track_all, which the liked-songs read goes through).
+// Everything else still needs the configured backend.
+const DIRECT_OPERATIONS: ReadonlySet<KugouOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check', 'user_detail', 'everyday_recommend', 'search_lyric', 'lyric', 'user_playlist', 'personal_fm', 'top_card_youth', 'playlist_track_all']);
 
 // The QR image the key endpoint itself returns, kept by key until the image is asked for:
 // asking for a key again would mint a different code and orphan the one on screen.
@@ -296,6 +299,152 @@ const requestKugouDirectLyric = async (params: KugouParams): Promise<unknown> =>
     return { ...parsed, decodeContent };
 };
 
+// A refusal the backend would have rejected (util/request.js): status 0, or a non-zero
+// error_code. Absent fields are not a refusal: some answers carry neither.
+const throwIfKugouDirectRefused = (body: unknown): void => {
+    const record = asRecord(body);
+    if (Number(record?.status) === 0) {
+        throw new OnlineProviderError('network', `KuGou direct request failed: ${Number(record?.error_code) || 'status 0'}`, 'kugou');
+    }
+    const errorCode = Number(record?.error_code);
+    if (Number.isFinite(errorCode) && errorCode !== 0 && errorCode !== 200) {
+        throw new OnlineProviderError('network', `KuGou direct request failed: ${errorCode}`, 'kugou');
+    }
+};
+
+// The account's playlists, straight from the platform (KuGouMusicApi module/user_playlist.js):
+// an Android-signed POST to the gateway, routed to the playlist service. The session's token
+// and userid ride in the signed query and the body where one is stored, so a signed-in account
+// gets its own lists. This is the call the account sync stands on: without it every sync in
+// the shell fails with KUGOU_API_BASE_MISSING (lx9). Verified live 2026-11-14 (anonymous:
+// HTTP 200, status 0, error_code 20010 — the sign-in missing, not the signature: the same
+// request with a wrong signature is refused with 20006 instead).
+const requestKugouDirectUserPlaylist = async (params: KugouParams): Promise<unknown> => {
+    const userId = Number(params.userid ?? readProviderSessionValue('kugou', 'userid') ?? '0');
+    const token = readProviderSessionValue('kugou', 'token') || '';
+    const data = JSON.stringify({
+        userid: userId,
+        token,
+        total_ver: 979,
+        type: 2,
+        page: Number(params.page ?? 1),
+        pagesize: Number(params.pagesize ?? 30),
+    });
+    const { params: defaults, headers } = directDefaults();
+    const query: Record<string, string | number> = { ...defaults, plat: 1, userid: userId, token };
+    query.signature = signatureAndroidParams(query, data);
+    const body = await requestKugouDirectJson(signedUrl('https://gateway.kugou.com/v7/get_all_list', query), {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'x-router': 'cloudlist.service.kugou.com' },
+        body: data,
+    });
+    throwIfKugouDirectRefused(body);
+    return body;
+};
+
+// Private FM, straight from the platform (KuGouMusicApi module/personal_fm.js): an
+// Android-signed POST to the gateway, routed to the FM service. The `key` is the parameter-key
+// signature over the millisecond client time (util/helper.js signParamsKey); the session's
+// userid and token ride in the body where one is stored, and a dislike's action, hash and
+// songid ride along too. Verified live 2026-11-14 (anonymous: HTTP 200, status 1,
+// error_code 0, songs under data.song_list).
+const requestKugouDirectPersonalFm = async (params: KugouParams): Promise<unknown> => {
+    const clienttime = Date.now();
+    const token = readProviderSessionValue('kugou', 'token') || '';
+    const userId = readProviderSessionValue('kugou', 'userid') || '';
+    const dataMap: Record<string, string | number> = {
+        appid: 1005,
+        clienttime,
+        mid: 'undefined',
+        action: typeof params.action === 'string' ? params.action : 'play',
+        recommend_source_locked: 0,
+        song_pool_id: Number(params.song_pool_id ?? 0),
+        callerid: 0,
+        m_type: 1,
+        platform: 'ios',
+        area_code: 1,
+        remain_songcnt: Number(params.remain_songcnt ?? 0),
+        clientver: 20489,
+        is_overplay: params.is_overplay ? 1 : 0,
+        mode: typeof params.mode === 'string' ? params.mode : 'normal',
+        fakem: 'ca981cfc583a4c37f28d2d49000013c16a0a',
+        key: md5(`1005${ANDROID_SIGN_SALT}20489${clienttime}`),
+    };
+    if (userId) {
+        dataMap.userid = userId;
+        dataMap.kguid = userId;
+    }
+    if (token) dataMap.token = token;
+    if (params.hash) dataMap.hash = String(params.hash);
+    if (params.songid) dataMap.songid = String(params.songid);
+    if (params.playtime) dataMap.playtime = String(params.playtime);
+    const data = JSON.stringify(dataMap);
+    const { params: defaults, headers } = directDefaults();
+    const query: Record<string, string | number> = { ...defaults };
+    query.signature = signatureAndroidParams(query, data);
+    const body = await requestKugouDirectJson(signedUrl('https://gateway.kugou.com/v2/personal_recommend', query), {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', 'x-router': 'persnfm.service.kugou.com' },
+        body: data,
+    });
+    throwIfKugouDirectRefused(body);
+    return body;
+};
+
+// One recommendation card, straight from the platform (KuGouMusicApi module/top_card_youth.js):
+// an Android-signed POST to the gateway, no sign-in needed. Verified live 2026-11-14
+// (card 3005: HTTP 200, status 1, error_code 0, songs under data.song_list).
+const requestKugouDirectTopCardYouth = async (params: KugouParams): Promise<unknown> => {
+    const data = JSON.stringify({ tagid: '', u_info: '', source_mixsong: '' });
+    const { params: defaults, headers } = directDefaults();
+    const query: Record<string, string | number> = {
+        ...defaults,
+        card_id: Number(params.card_id ?? 3005),
+        area_code: 1,
+        platform: 'ios',
+        module_id: 1,
+        ver: 'v2',
+        pagesize: Number(params.pagesize ?? 30),
+        clientver: 11490,
+    };
+    query.signature = signatureAndroidParams(query, data);
+    const body = await requestKugouDirectJson(signedUrl('https://gateway.kugou.com/youth/v1/song/single_card_recommend', query), {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: data,
+    });
+    throwIfKugouDirectRefused(body);
+    return body;
+};
+
+// The tracks of one playlist, straight from the platform (KuGouMusicApi
+// module/playlist_track_all.js): an Android-signed GET. The liked-songs read goes through it,
+// so the sync's liked songs come back without a backend.
+const requestKugouDirectPlaylistTrackAll = async (params: KugouParams): Promise<unknown> => {
+    const pagesize = Number(params.pagesize ?? 30);
+    const page = Number(params.page ?? 1);
+    const { params: defaults, headers } = directDefaults();
+    const query: Record<string, string | number> = {
+        ...defaults,
+        area_code: 1,
+        begin_idx: (page - 1) * pagesize,
+        plat: 1,
+        type: 1,
+        mode: 1,
+        personal_switch: 1,
+        extend_fields: 'abtags,hot_cmt,popularization',
+        pagesize,
+        global_collection_id: String(params.id ?? ''),
+    };
+    query.signature = signatureAndroidParams(query, '');
+    const body = await requestKugouDirectJson(signedUrl('https://gateway.kugou.com/pubsongs/v2/get_other_list_file_nofilt', query), {
+        method: 'GET',
+        headers,
+    });
+    throwIfKugouDirectRefused(body);
+    return body;
+};
+
 // One direct operation, in the shape the web backend would have answered with.
 const requestKugouDirect = async (operation: KugouOperation, params: KugouParams): Promise<unknown> => {
     if (operation === 'login_qr_key') return requestKugouDirectQrKey();
@@ -310,6 +459,10 @@ const requestKugouDirect = async (operation: KugouOperation, params: KugouParams
     }
     if (operation === 'user_detail') return requestKugouDirectUserDetail(params);
     if (operation === 'everyday_recommend') return requestKugouDirectEverydayRecommend();
+    if (operation === 'user_playlist') return requestKugouDirectUserPlaylist(params);
+    if (operation === 'personal_fm') return requestKugouDirectPersonalFm(params);
+    if (operation === 'top_card_youth') return requestKugouDirectTopCardYouth(params);
+    if (operation === 'playlist_track_all') return requestKugouDirectPlaylistTrackAll(params);
     if (operation === 'search_lyric') return requestKugouDirectSearchLyric(params);
     if (operation === 'lyric') return requestKugouDirectLyric(params);
     throw new OnlineProviderError('unavailable', KUGOU_API_BASE_MISSING, 'kugou');

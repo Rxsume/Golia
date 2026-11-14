@@ -109,6 +109,8 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
     }, [resolveTrackDisplay, searchResults]);
     const collections = collectionResults || [];
     const isCollectionKind = searchKind !== 'song';
+    // 在线单曲搜索一次问所有聚合平台：结果行上各有各的平台记号，这里的来源就是全部平台。
+    const isAggregatedSearch = searchKind === 'song' && searchSourceTab !== 'local' && searchSourceTab !== 'navidrome';
     const resultCount = isCollectionKind ? collections.length : results.length;
     const { sources, activeProviderId } = useSearchSources(hasLocalSongs);
     const kinds = useMemo(() => getSearchKinds(searchSourceTab), [searchSourceTab]);
@@ -208,7 +210,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                         />
 
                         <div className="search-meta">
-                            <span>{getSourceLabel(searchSourceTab)}</span>
+                            <span>{isAggregatedSearch ? t('search.aggregatedSources') : getSourceLabel(searchSourceTab)}</span>
                             {!isSearching && resultCount > 0 && (
                                 <span>{t('search.resultCount', { n: countLabel })}</span>
                             )}
