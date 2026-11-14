@@ -1066,4 +1066,159 @@ describe('QQ musicu requests', () => {
         expect(error).toMatchObject({ code: 'invalid-response', cause: { code: 500000 } });
         expect(error?.message).toContain('500000');
     });
+
+    // lx14：手机壳的 NodeMobile 在 127.0.0.1:3212 跑了 qq-music-api，网页 App 探通就走本地、
+    // 探不通回落 Worker。探查只在有原生 HTTP 插件的壳里跑（hasNativeHttp），别处走 Worker。
+    describe('on-device QQ backend (127.0.0.1:3212)', () => {
+        beforeEach(() => {
+            // These tests exercise requestQq against a backend, so the Worker base is
+            // configured here (the enclosing musicu suite clears it: that path needs none).
+            vi.stubEnv('VITE_QQ_API_BASE', 'https://qq.example.test');
+        });
+
+        it('treats a 2xx login-status answer as a reachable local backend', async () => {
+            const fetchMock = vi.fn().mockResolvedValue(Response.json({}, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { LOCAL_QQ_API_BASE, probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            expect(LOCAL_QQ_API_BASE).toBe('http://127.0.0.1:3212');
+            await expect(probeLocalQqBackend()).resolves.toBe(true);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const [target, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+            // The probe hits /login/status, not the root: the backend's root answer has no
+            // Access-Control-Allow-Origin, so the shell's webview refuses it (see qqTransport).
+            expect(target).toBe('http://127.0.0.1:3212/login/status');
+            expect(init?.signal).toBeInstanceOf(AbortSignal);
+        });
+
+        it('treats a non-2xx login-status answer as unreachable', async () => {
+            vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status: 500 })));
+            const { probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(probeLocalQqBackend()).resolves.toBe(false);
+        });
+
+        it('treats a failed probe fetch as unreachable', async () => {
+            vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+            const { probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(probeLocalQqBackend()).resolves.toBe(false);
+        });
+
+        it('probes once per run and reuses the cached outcome', async () => {
+            const fetchMock = vi.fn(async () => Response.json({}, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(probeLocalQqBackend()).resolves.toBe(true);
+            await expect(probeLocalQqBackend()).resolves.toBe(true);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('probes again after resetQqTransportRuntimeCache', async () => {
+            const fetchMock = vi.fn(async () => Response.json({}, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { probeLocalQqBackend, resetQqTransportRuntimeCache } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(probeLocalQqBackend()).resolves.toBe(true);
+            resetQqTransportRuntimeCache();
+            await expect(probeLocalQqBackend()).resolves.toBe(true);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+
+        it('shares one in-flight probe across concurrent callers', async () => {
+            const fetchMock = vi.fn().mockResolvedValue(Response.json({}, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            const [first, second] = await Promise.all([probeLocalQqBackend(), probeLocalQqBackend()]);
+            expect(first).toBe(true);
+            expect(second).toBe(true);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('re-probes a negative result after the TTL instead of caching it for the run', async () => {
+            const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+            vi.stubGlobal('fetch', fetchMock);
+            const { probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            let now = 1_000_000;
+            const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+            try {
+                await expect(probeLocalQqBackend()).resolves.toBe(false);
+                await expect(probeLocalQqBackend()).resolves.toBe(false);
+                expect(fetchMock).toHaveBeenCalledTimes(1);
+                now += 31_000;
+                await expect(probeLocalQqBackend()).resolves.toBe(false);
+                expect(fetchMock).toHaveBeenCalledTimes(2);
+            } finally {
+                nowSpy.mockRestore();
+            }
+        });
+
+        it('prefers the Electron backend over the local backend', async () => {
+            vi.stubGlobal('window', {
+                electron: { getQqPort: vi.fn().mockResolvedValue(4000) },
+                Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } },
+            });
+            const fetchMock = vi.fn().mockResolvedValue(Response.json({ code: 200, data: {} }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).resolves.toEqual({ code: 200, data: {} });
+            // No probe: the Electron base wins before the local backend is even checked.
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+            expect(requestUrl.origin).toBe('http://127.0.0.1:4000');
+            expect(requestUrl.pathname).toBe('/login/status');
+        });
+
+        it('uses the local backend when the probe answers in the native shell', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            // The probe and the login_status call hit the same local route; the probe is the
+            // first call, the request the second.
+            const fetchMock = vi.fn().mockResolvedValue(Response.json({ code: 200, data: {} }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).resolves.toEqual({ code: 200, data: {} });
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            const probeUrl = new URL(String(fetchMock.mock.calls[0][0]));
+            expect(probeUrl.origin).toBe('http://127.0.0.1:3212');
+            expect(probeUrl.pathname).toBe('/login/status');
+            const requestUrl = new URL(String(fetchMock.mock.calls[1][0]));
+            expect(requestUrl.origin).toBe('http://127.0.0.1:3212');
+            expect(requestUrl.pathname).toBe('/login/status');
+            expect(logSpy).toHaveBeenCalledWith('[QQ] backend: local 127.0.0.1:3212');
+        });
+
+        it('falls back to the Worker when the probe fails in the native shell', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const fetchMock = vi.fn(async (url: string) => {
+                if (String(url) === 'http://127.0.0.1:3212/login/status') throw new TypeError('Failed to fetch');
+                return Response.json({ code: 200, data: {} });
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).resolves.toEqual({ code: 200, data: {} });
+            const requestUrl = new URL(String(fetchMock.mock.calls[1][0]));
+            expect(requestUrl.origin).toBe('https://qq.example.test');
+            expect(requestUrl.pathname).toBe('/login/status');
+            expect(logSpy).toHaveBeenCalledWith('[QQ] backend: worker (local backend not reachable)');
+        });
+
+        it('never probes outside the native shell and keeps the Worker base', async () => {
+            const fetchMock = vi.fn().mockResolvedValue(Response.json({ code: 200, data: {} }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).resolves.toEqual({ code: 200, data: {} });
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+            expect(requestUrl.origin).toBe('https://qq.example.test');
+        });
+    });
 });

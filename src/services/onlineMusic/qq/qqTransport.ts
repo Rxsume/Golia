@@ -165,8 +165,60 @@ export const QQ_API_BASE_MISSING = 'VITE_QQ_API_BASE is not configured';
 
 let electronApiBase: string | null = null;
 
+// The iOS shell's NodeMobile runs qq-music-api on the device (main.js, folia-node-backend),
+// listening on 127.0.0.1:3212. The web app probes it; when it answers, QQ requests go
+// there instead of the configured Worker, so playback works without a VPN. When it does
+// not answer, requests fall back to the Worker.
+export const LOCAL_QQ_API_BASE = 'http://127.0.0.1:3212';
+const LOCAL_QQ_PROBE_TIMEOUT_MS = 1500;
+// A negative probe is only cached briefly: NodeMobile may still be starting when the
+// first QQ request fires, and a single failed probe must not disable the local backend
+// for the whole run.
+const LOCAL_QQ_PROBE_NEGATIVE_TTL_MS = 30_000;
+// The probe hits /login/status, not the root: the backend serves GET / from koa-static
+// before its CORS middleware, so the root answer carries no Access-Control-Allow-Origin
+// and a plain fetch from the shell (capacitor://localhost) is refused by the webview;
+// /login/status is a real API route that answers with Access-Control-Allow-Origin: *.
+// Unit tests mock fetch and cannot see this CORS behaviour; it needs a device check.
+const LOCAL_QQ_PROBE_PATH = '/login/status';
+
+// Cached probe outcome for this run: null = not probed yet. A positive outcome is kept
+// for the run; a negative one is kept only until LOCAL_QQ_PROBE_NEGATIVE_TTL_MS has
+// passed. The in-flight probe is shared, so concurrent first requests do not each start one.
+let localBackendAvailable: boolean | null = null;
+let localBackendProbe: Promise<boolean> | null = null;
+let localBackendProbedAt = 0;
+
 export const resetQqTransportRuntimeCache = (): void => {
     electronApiBase = null;
+    localBackendAvailable = null;
+    localBackendProbe = null;
+    localBackendProbedAt = 0;
+};
+
+/** Probes the on-device QQ backend; true when its login-status route answers 2xx. */
+export const probeLocalQqBackend = async (): Promise<boolean> => {
+    if (localBackendAvailable === true) return true;
+    if (localBackendAvailable === false && Date.now() - localBackendProbedAt < LOCAL_QQ_PROBE_NEGATIVE_TTL_MS) return false;
+    if (!localBackendProbe) {
+        localBackendAvailable = null;
+        localBackendProbe = (async () => {
+            try {
+                const answer = await fetch(`${LOCAL_QQ_API_BASE}${LOCAL_QQ_PROBE_PATH}`, { signal: AbortSignal.timeout(LOCAL_QQ_PROBE_TIMEOUT_MS) });
+                const ok = answer.ok;
+                console.log(ok ? '[QQ] backend: local 127.0.0.1:3212' : '[QQ] backend: worker (local backend not reachable)');
+                return ok;
+            } catch {
+                console.log('[QQ] backend: worker (local backend not reachable)');
+                return false;
+            }
+        })();
+    }
+    const probe = localBackendProbe;
+    localBackendAvailable = await probe;
+    localBackendProbedAt = Date.now();
+    if (localBackendProbe === probe) localBackendProbe = null;
+    return localBackendAvailable;
 };
 
 // 内嵌后端没在监听时，把主进程报的状态与故障原因带进错误：时间线里直接能看到它为什么没起来。
@@ -220,6 +272,11 @@ const resolveApiBase = async (): Promise<string> => {
         // 网页版没配后端地址：这里用不了 QQ 音乐，再试也一样（qqFailure.ts 说它是「没有配置」）。
         throw new OnlineProviderError('unavailable', QQ_API_BASE_MISSING, 'qq');
     }
+    // On-device backend (iOS shell's NodeMobile runs qq-music-api on 127.0.0.1:3212):
+    // prefer it when it answers, otherwise fall back to the configured Worker. Only the
+    // native shell can have a local backend, so the probe only runs where the native HTTP
+    // plugin is present (hasNativeHttp); elsewhere the base stays the Worker.
+    if (hasNativeHttp() && await probeLocalQqBackend()) return LOCAL_QQ_API_BASE;
     return base;
 };
 
