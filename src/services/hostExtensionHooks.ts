@@ -120,6 +120,10 @@ export const hasBeforePlayHook = () => beforePlayHook !== null && beforePlayActi
  * Omni result hooks: run inside the Omni facade after a provider answered, so
  * an extension can rewrite the lyrics or swap the audio URL of any online
  * song without touching a provider. Pass-through when not installed or idle.
+ * Several layers install one (the Folium experimental hooks, the built-in LX
+ * fallback): they chain in install order, each seeing the previous one's
+ * result, so no install can silently replace another — a mod that opts in
+ * after startup must not switch the fallback off.
  */
 export interface OmniResultHooks {
     lyrics?: (song: SongResult, result: ProviderLyricsResult) => Promise<ProviderLyricsResult>;
@@ -127,30 +131,45 @@ export interface OmniResultHooks {
     isActive?: (kind: 'lyrics' | 'audio') => boolean;
 }
 
-let omniHooks: OmniResultHooks | null = null;
+let omniHookEntries: OmniResultHooks[] = [];
 
+/*
+ * Adds an omni result hooks object to the chain (installing the same object
+ * twice is a no-op). `null` clears the chain — the tests use it between
+ * cases; production never uninstalls.
+ */
 export const installOmniResultHooks = (hooks: OmniResultHooks | null) => {
-    omniHooks = hooks;
+    if (hooks === null) {
+        omniHookEntries = [];
+        return;
+    }
+    if (!omniHookEntries.includes(hooks)) omniHookEntries.push(hooks);
 };
 
 export const applyOmniLyricsHook = async (song: SongResult, result: ProviderLyricsResult): Promise<ProviderLyricsResult> => {
-    if (!omniHooks?.lyrics || omniHooks.isActive?.('lyrics') === false) return result;
-    try {
-        return await omniHooks.lyrics(song, result);
-    } catch (error) {
-        console.warn('[HostHooks] omni lyrics hook failed; using the provider result', error);
-        return result;
+    let current = result;
+    for (const hooks of omniHookEntries) {
+        if (!hooks.lyrics || hooks.isActive?.('lyrics') === false) continue;
+        try {
+            current = await hooks.lyrics(song, current);
+        } catch (error) {
+            console.warn('[HostHooks] omni lyrics hook failed; using the result so far', error);
+        }
     }
+    return current;
 };
 
 export const applyOmniAudioHook = async (song: SongResult, source: ProviderAudioSource | null): Promise<ProviderAudioSource | null> => {
-    if (!omniHooks?.audio || omniHooks.isActive?.('audio') === false) return source;
-    try {
-        return await omniHooks.audio(song, source);
-    } catch (error) {
-        console.warn('[HostHooks] omni audio hook failed; using the provider source', error);
-        return source;
+    let current = source;
+    for (const hooks of omniHookEntries) {
+        if (!hooks.audio || hooks.isActive?.('audio') === false) continue;
+        try {
+            current = await hooks.audio(song, current);
+        } catch (error) {
+            console.warn('[HostHooks] omni audio hook failed; using the source so far', error);
+        }
     }
+    return current;
 };
 
 /*

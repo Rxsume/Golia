@@ -96,7 +96,7 @@ export const ponderTargetsRegistry = createFoliumRegistry<PonderTargetInput, Sto
 /** Registries owned by this module, for teardown alongside the stable ones. */
 export const EXPERIMENTAL_REGISTRIES = [omniProvidersRegistry, ponderTargetsRegistry, remoteActionsRegistry];
 
-// ---- omni.hooks: installed once, active only while some mod listens
+// ---- omni.hooks: installed once, active only while some mod listens; the omni hooks chain, so this runs alongside the built-in LX fallback whichever was installed first
 
 const omniSong = (song: SongResult): FoliumSong => toFoliumSong(song) as FoliumSong;
 

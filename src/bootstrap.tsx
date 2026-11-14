@@ -101,7 +101,7 @@ const bootFolium = async () => {
     // 显式打开集合时关掉开着的模组首页页面；与 Home 挂没挂着无关，所以在这里装（见 foliumHomePageDismissal）。
     installFoliumHomePageDismissal();
     await startFoliumForMainWindow({ firstScreenWaitMs: FIRST_SCREEN_MOD_WAIT_MS });
-    // 内置 LX 音源兜底：装在启动最后（omni hook 单槽，后装的赢），只在原生 provider 拿不到链接时补一个 URL。
+    // 内置 LX 音源兜底：omni hook 是链式的，先后安装的都会跑，不用再抢最后装；只在原生 provider 拿不到链接时补一个 URL。
     installLxFallbackHook();
 };
 

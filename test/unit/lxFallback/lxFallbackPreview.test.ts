@@ -74,4 +74,61 @@ describe('LX hook on a preview (trial) source', () => {
         expect(result?.url).toBe('https://m801.music.126.net/full.mp3');
         expect(result?.preview).toBe(false);
     });
+
+    // The bug this guards: the omni hook used to be a single slot, so a mod
+    // that opted into the experimental hooks after startup silently replaced
+    // the LX hook and the fallback never fired. A pass-through hook stands in
+    // for the Folium one with nobody listening.
+    it('still races when another hook was installed before it', async () => {
+        installOmniResultHooks({ audio: async (_song, source) => source });
+        installLxFallbackHook();
+        const result = await applyOmniAudioHook(song(), null);
+        expect(result?.url).toBe('https://m801.music.126.net/full.mp3');
+        expect(result?.preview).toBe(false);
+    });
+
+    it('still races when another hook is installed after it', async () => {
+        installLxFallbackHook();
+        installOmniResultHooks({ audio: async (_song, source) => source });
+        const result = await applyOmniAudioHook(song(), null);
+        expect(result?.url).toBe('https://m801.music.126.net/full.mp3');
+        expect(result?.preview).toBe(false);
+    });
+
+    it('logs when a song the fallback should cover has no identity', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            installLxFallbackHook();
+            const noIdentity: UnifiedSong = {
+                ...song(),
+                id: '',
+                sourceRef: { kind: 'online', providerId: 'qq', mediaId: '' },
+            };
+            const result = await applyOmniAudioHook(noIdentity, null);
+            expect(result).toBeNull();
+            expect(resolveMusicUrl).not.toHaveBeenCalled();
+            expect(info.mock.calls.map(call => String(call[0])).some(
+                line => line.startsWith('[lxFallback] no song identity for qq'),
+            )).toBe(true);
+        } finally {
+            info.mockRestore();
+        }
+    });
+
+    it('stays quiet about identity for a song the fallback does not cover', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            installLxFallbackHook();
+            const localSong = {
+                ...song(),
+                sourceRef: { kind: 'local', mediaId: 'x' },
+            } as unknown as UnifiedSong;
+            await applyOmniAudioHook(localSong, null);
+            expect(info.mock.calls.map(call => String(call[0])).some(
+                line => line.includes('no song identity'),
+            )).toBe(false);
+        } finally {
+            info.mockRestore();
+        }
+    });
 });

@@ -157,7 +157,17 @@ const resolveViaScript = async (
 export const resolveLxAudioUrl = async (song: SongResult): Promise<string | null> => {
     const startedAt = Date.now();
     const identity = await resolveLxSongIdentity(song);
-    if (!identity) return null;
+    if (!identity) {
+        // A song the fallback should cover but cannot identify used to fail
+        // silently: in the run log that looks exactly like a hook that never
+        // ran. Only logged for a provider the fallback maps, so a local song
+        // or an unmapped provider stays quiet.
+        const ref = getPlaybackSourceRef(song);
+        if (ref.kind === 'online' && LX_SOURCE_BY_PROVIDER_ID[ref.providerId]) {
+            console.info(`[lxFallback] no song identity for ${ref.providerId} ${String(song.id)}`);
+        }
+        return null;
+    }
     const attempts = LX_SCRIPTS.map(script => resolveViaScript(script.id, identity, LX_QUALITY, LX_BACKEND_TIMEOUT_MS));
     const winner = await Promise.race([
         firstLxSuccess(attempts),
@@ -176,8 +186,9 @@ export const resolveLxAudioUrl = async (song: SongResult): Promise<string | null
  * produced no URL, and when it produced only a trial clip (`preview`): a trial is
  * not a playable full song, so the scripts race for a full URL first and the
  * provider's trial is only kept when none of them has one. Anything it returns is
- * recorded as a standard-quality hook URL. Installs last at startup so no earlier
- * hook can overwrite it.
+ * recorded as a standard-quality hook URL. Omni hooks chain in install order,
+ * so this runs alongside the Folium experimental hooks no matter which of
+ * them was installed first.
  */
 export const installLxFallbackHook = (): void => {
     installOmniResultHooks({
