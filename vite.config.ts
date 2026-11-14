@@ -330,9 +330,9 @@ export default async function viteConfig(_config: ConfigEnv): Promise<UserConfig
       '__BUILD_KIND__': JSON.stringify(buildKind.kind),
       '__BUILD_HOST__': JSON.stringify(buildKind.host ?? ''),
       '__APP_VERSION__': JSON.stringify(JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')).version),
-      // The Golia lx build number (19 for lx19): the in-app update check compares it with the
+      // The Golia lx build number (20 for lx20): the in-app update check compares it with the
       // lx number of the latest GitHub release tag. Bump it with every lx release.
-      '__LX_BUILD__': JSON.stringify(19),
+      '__LX_BUILD__': JSON.stringify(20),
       '__APP_VERSION_LABEL__': JSON.stringify(appVersionLabel),
       '__APP_RELEASE_CHANNEL__': JSON.stringify(appReleaseChannel),
       '__DOCKER_STACK_VERSION__': JSON.stringify(dockerStackVersion)
