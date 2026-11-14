@@ -171,6 +171,10 @@ let electronApiBase: string | null = null;
 // not answer, requests fall back to the Worker.
 export const LOCAL_QQ_API_BASE = 'http://127.0.0.1:3212';
 const LOCAL_QQ_PROBE_TIMEOUT_MS = 1500;
+// The first probe of a run gets a longer timeout and one retry: NodeMobile is still
+// starting when the first QQ request fires, and its cold start far exceeds 1500 ms.
+// Later re-probes (after the negative TTL has passed) use the plain timeout.
+const LOCAL_QQ_PROBE_FIRST_TIMEOUT_MS = 5000;
 // A negative probe is only cached briefly: NodeMobile may still be starting when the
 // first QQ request fires, and a single failed probe must not disable the local backend
 // for the whole run.
@@ -203,15 +207,15 @@ export const probeLocalQqBackend = async (): Promise<boolean> => {
     if (!localBackendProbe) {
         localBackendAvailable = null;
         localBackendProbe = (async () => {
-            try {
-                const answer = await fetch(`${LOCAL_QQ_API_BASE}${LOCAL_QQ_PROBE_PATH}`, { signal: AbortSignal.timeout(LOCAL_QQ_PROBE_TIMEOUT_MS) });
-                const ok = answer.ok;
-                console.log(ok ? '[QQ] backend: local 127.0.0.1:3212' : '[QQ] backend: worker (local backend not reachable)');
-                return ok;
-            } catch {
-                console.log('[QQ] backend: worker (local backend not reachable)');
-                return false;
-            }
+            // The first probe of the run gets the longer timeout and one retry: NodeMobile
+            // is still starting when the first QQ request fires, so the first attempt can be
+            // refused while the backend answers a moment later.
+            const firstOfRun = localBackendProbedAt === 0;
+            const timeout = firstOfRun ? LOCAL_QQ_PROBE_FIRST_TIMEOUT_MS : LOCAL_QQ_PROBE_TIMEOUT_MS;
+            let ok = await probeLocalOnce(timeout);
+            if (!ok && firstOfRun) ok = await probeLocalOnce(timeout);
+            console.log(ok ? '[QQ] backend: local 127.0.0.1:3212' : '[QQ] backend: worker (local backend not reachable)');
+            return ok;
         })();
     }
     const probe = localBackendProbe;
@@ -219,6 +223,16 @@ export const probeLocalQqBackend = async (): Promise<boolean> => {
     localBackendProbedAt = Date.now();
     if (localBackendProbe === probe) localBackendProbe = null;
     return localBackendAvailable;
+};
+
+// One probe attempt: true when the local backend's login-status route answers 2xx.
+const probeLocalOnce = async (timeoutMs: number): Promise<boolean> => {
+    try {
+        const answer = await fetch(`${LOCAL_QQ_API_BASE}${LOCAL_QQ_PROBE_PATH}`, { signal: AbortSignal.timeout(timeoutMs) });
+        return answer.ok;
+    } catch {
+        return false;
+    }
 };
 
 // 内嵌后端没在监听时，把主进程报的状态与故障原因带进错误：时间线里直接能看到它为什么没起来。
@@ -255,7 +269,12 @@ const isQqSessionStoreUnreadable = async (): Promise<boolean> => {
     }
 };
 
-const resolveApiBase = async (): Promise<string> => {
+// Operations that establish a new session rather than validate the stored one.
+const SESSION_ESTABLISHING_OPERATIONS: ReadonlySet<QqOperation> = new Set([
+    'login_qr_key', 'login_qr_create', 'login_qr_check', 'login_qr_cancel',
+]);
+
+const resolveApiBase = async (operation: QqOperation): Promise<string> => {
     const readPort = getElectronQqPortReader();
     if (readPort) {
         if (electronApiBase) return electronApiBase;
@@ -276,7 +295,19 @@ const resolveApiBase = async (): Promise<string> => {
     // prefer it when it answers, otherwise fall back to the configured Worker. Only the
     // native shell can have a local backend, so the probe only runs where the native HTTP
     // plugin is present (hasNativeHttp); elsewhere the base stays the Worker.
-    if (hasNativeHttp() && await probeLocalQqBackend()) return LOCAL_QQ_API_BASE;
+    if (hasNativeHttp()) {
+        if (await probeLocalQqBackend()) return LOCAL_QQ_API_BASE;
+        // A stored session issued by the local backend must never be validated against the
+        // Worker: the Worker keeps its own session namespace and answers "no profile" (or
+        // 401) for a local token, which the account read would take as "expired" and delete
+        // the token. While the local backend is not up yet (NodeMobile cold start), a
+        // session-bearing request is unavailable, not expired; the account stays 'unknown'.
+        // Requests that establish a new session (the QR login flow) are exempt: they do not
+        // validate the stored session, and the session they return records its backend.
+        if (hasQqSession() && isQqSessionLocal() && !SESSION_ESTABLISHING_OPERATIONS.has(operation)) {
+            throw new OnlineProviderError('unavailable', 'QQ local backend is not reachable yet', 'qq');
+        }
+    }
     return base;
 };
 
@@ -304,6 +335,31 @@ const isSameOriginBase = (base: string): boolean => base.startsWith('/');
 
 export const hasQqSession = (): boolean => Boolean(getWebSessionCookie());
 
+// Which backend issued the stored session. Recorded when the session is stored;
+// a session stored before lx19 has no marker and is assumed local in the shell
+// (hasNativeHttp), because lx14+ logs in through the local backend there, and remote
+// elsewhere (the web build only has the Worker).
+export type QqSessionBackend = 'local' | 'remote';
+const QQ_SESSION_BACKEND_KEY = 'session-backend';
+
+export const getQqSessionBackend = (): QqSessionBackend | null => {
+    const stored = readProviderSessionValue('qq', QQ_SESSION_BACKEND_KEY);
+    return stored === 'local' || stored === 'remote' ? stored : null;
+};
+
+const isLocalQqApiBase = (base: string): boolean => base.startsWith('http://127.0.0.1:');
+
+/** Whether the stored session was issued by the on-device/embedded backend, not the Worker. */
+export const isQqSessionLocal = (): boolean => {
+    const backend = getQqSessionBackend();
+    if (backend) return backend === 'local';
+    return hasNativeHttp();
+};
+
+const recordQqSessionBackend = (base: string): void => {
+    writeProviderSessionValue('qq', QQ_SESSION_BACKEND_KEY, isLocalQqApiBase(base) ? 'local' : 'remote');
+};
+
 /**
  * 存着的 session 是不是停用的那个：主进程这次启动没读出加密的登录仓库、这次运行里也还没有新登录（isQqSessionStoreUnreadable），
  * 存着的就只能是之前一次运行的，后端不可能认得，带上它每个要登录的请求（连播放）都回 401。所以这次不带它（requestQq），按游客播放；
@@ -318,7 +374,10 @@ export const isQqSessionParked = async (): Promise<boolean> => hasQqSession() &&
  */
 export const hasUsableQqSession = (): boolean => hasQqSession() && !lastStoreUnreadable;
 
-export const clearQqSession = (): void => removeProviderSessionValue('qq', 'cookie');
+export const clearQqSession = (): void => {
+    removeProviderSessionValue('qq', 'cookie');
+    removeProviderSessionValue('qq', QQ_SESSION_BACKEND_KEY);
+};
 
 // 后端的退避时长（qq-music-api 在 429 的响应体里给 retryAfterMs，同时带 Retry-After 头，单位是秒）。
 // 只收非负安全整数，读不出就不给，调用方按普通失败处理。
@@ -408,10 +467,15 @@ const assertUpstreamAccepted = (operation: QqOperation, body: any): void => {
     }
 };
 
-const persistConfirmedSession = (operation: QqOperation, body: any): void => {
+const persistConfirmedSession = (operation: QqOperation, body: any, base: string): void => {
     if (operation !== 'login_qr_check' || Number(body?.code) !== QR_CONFIRMED_CODE) return;
     const cookie = body?.cookie;
-    if (typeof cookie === 'string' && cookie) writeProviderSessionValue('qq', 'cookie', cookie);
+    if (typeof cookie === 'string' && cookie) {
+        writeProviderSessionValue('qq', 'cookie', cookie);
+        // The session belongs to the backend that answered this check; a later request
+        // must be validated there, never against the other one.
+        recordQqSessionBackend(base);
+    }
 };
 
 /** 网页版配置的远端 API 地址（自检与诊断报告用）；桌面版走内嵌后端，返回 null。 */
@@ -464,12 +528,16 @@ const dropSessionSent = (sent: string): void => {
 };
 
 // 一个不是 login_status 的请求带着 session 回了 401：问一次 login_status。后端不再认出这个用户、存着的又还是吃了 401 的
-// 那个 session，就清掉它，之后的请求按游客走（免费的歌照常能播）；还认得就留着，问不到也留着。同一时间只问一次。
+// 那个 session，才清掉它，之后的请求按游客走（免费的歌照常能播）；一个没有 profile 的回答不清：从没拿到这个 session 的
+// 后端也这样答，token 得留着，等对着发它的后端再问一次才可能活过来。还认得就留着，问不到也留着。同一时间只问一次。
 let sessionCheck: Promise<void> | null = null;
 const checkSessionAfterRefusal = (sent: string): void => {
     if (sessionCheck || getWebSessionCookie() !== sent) return;
     sessionCheck = requestQq<any>('login_status').then(
-        body => !body?.data?.profile,
+        // An empty profile does not end the session: a backend that was never given this
+        // session answers the same way. Only a 401 from the issuing backend ends it (the
+        // transport only sends the stored session to the backend that issued it).
+        () => false,
         error => error instanceof OnlineProviderError && error.code === 'auth-required',
     ).then(ended => {
         console.info(`[QQ] A request was refused with 401; login_status ${ended ? 'no longer names the account, the session goes' : 'did not say the sign-in ended, the session stays'}`);
@@ -496,7 +564,7 @@ export const requestQq = async <T = unknown>(
         );
     }
     const stored = getWebSessionCookie();
-    const base = await resolveApiBase();
+    const base = await resolveApiBase(operation);
     // The session parked for this run is not sent (isQqSessionParked). The status is read once the backend has a port.
     const cookie = stored && await isQqSessionStoreUnreadable() ? '' : stored;
 
@@ -564,7 +632,7 @@ export const requestQq = async <T = unknown>(
         throw new OnlineProviderError('invalid-response', `QQMusicApi returned an unreadable ${operation} body`, 'qq');
     }
     assertUpstreamAccepted(operation, body);
-    persistConfirmedSession(operation, body);
+    persistConfirmedSession(operation, body, base);
     return body as T;
 };
 

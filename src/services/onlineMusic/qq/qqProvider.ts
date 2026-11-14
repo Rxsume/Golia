@@ -507,6 +507,15 @@ const signedOutUnlessStoreUnreadable = async (): Promise<null> => {
     throw new OnlineProviderError('unavailable', 'QQ sign-in store could not be read at this start', 'qq');
 };
 
+// A 401 from the backend the login_status request was sent to: the transport only sends a
+// stored session to the backend that issued it (or reports unavailable when that backend
+// cannot be reached), so the session is gone at its own backend and it goes. A parked
+// session was never sent, so it cannot have been refused: it stays.
+const signedOutAfterRefusal = async (): Promise<null> => {
+    if (!await isQqSessionParked()) clearQqSession();
+    return signedOutUnlessStoreUnreadable();
+};
+
 const getLoginStatus = async (): Promise<ProviderUser | null> => {
     // No opaque backend session means the account cannot be authenticated, so the startup request is skipped.
     if (!hasQqSession()) {
@@ -518,6 +527,10 @@ const getLoginStatus = async (): Promise<ProviderUser | null> => {
         const response = await requestQq<any>('login_status');
         const profile = response?.data?.profile;
         if (!profile) {
+            // An empty profile does not by itself say the sign-in ended: a backend that was
+            // never given this session answers the same way. The account leaves the UI, but
+            // the token stays, so a later login_status against the backend that issued it
+            // can still revive the sign-in.
             noteLoginStatusCheck(diagnosticLine`login_status: the backend does not recognize the stored session`);
             console.info('[QQProvider] login-status:anonymous');
             return signedOutUnlessStoreUnreadable();
@@ -541,7 +554,7 @@ const getLoginStatus = async (): Promise<ProviderUser | null> => {
         // Missing, expired, rejected, or non-persisted backend sessions all arrive as 401.
         if (error instanceof OnlineProviderError && error.code === 'auth-required') {
             console.info('[QQProvider] login-status:auth-required');
-            return signedOutUnlessStoreUnreadable();
+            return signedOutAfterRefusal();
         }
         console.warn('[QQProvider] login-status:error', error);
         throw error;
@@ -551,9 +564,7 @@ const getLoginStatus = async (): Promise<ProviderUser | null> => {
 // The request takes the session as it is when it is made (`requestQq`); the session leaves the
 // page at once, before the first wait and whatever the backend answers.
 const logout = async (): Promise<void> => {
-    clearQqGuessYouLikeCatalog();
-    lastQqAccountId = null;
-    stopQqSessionRefresh();
+    clearQqAccountState();
     const told = hasQqSession()
         ? requestQq('logout').catch(error => {
             console.warn('[QQProvider] logout:error', error);
@@ -561,6 +572,23 @@ const logout = async (): Promise<void> => {
         : undefined;
     clearQqSession();
     await told;
+};
+
+// The sign-in ran out: the issuing backend no longer recognises the session (401), or it
+// answered with no profile. The account leaves the UI either way, but the token is only
+// dropped where the issuing backend itself said no with a 401 (getLoginStatus clears it
+// there); an empty profile keeps the token, so a later login_status against the backend
+// that issued it can still revive the sign-in. No logout request is sent: the session is
+// already dead or unvalidated at the backend.
+const signInRanOut = async (): Promise<void> => {
+    clearQqAccountState();
+};
+
+// The account leaves the page: its cached guesses and the refresh timer go either way.
+const clearQqAccountState = (): void => {
+    clearQqGuessYouLikeCatalog();
+    lastQqAccountId = null;
+    stopQqSessionRefresh();
 };
 
 // 扫码登录方式：`id` 就是后端 `?channel=` 的取值，UI 层只认 labelKey 与 iconKey。
@@ -1134,8 +1162,9 @@ export const qqProvider: OnlineMusicProvider = {
         }),
         getLoginStatus,
         logout,
-        // The session this page keeps for the backend goes the same way.
-        signInRanOut: logout,
+        // The session this page keeps for the backend goes only where its own backend said
+        // no with a 401 (see getLoginStatus); an empty profile keeps it for a later revive.
+        signInRanOut,
         showsKeptAccountAtStart: true,
         getLoginMethods,
         resolveLoginMethods,

@@ -537,8 +537,9 @@ describe('QQ Music Web transport', () => {
         expect(hasQqSession()).toBe(true);
     });
 
-    // 登录在 Folia 开着时到期：第一次 401 后问一次 login_status，后端不再认出这个用户就清掉 session，之后的歌按游客播放。
-    it('drops the session after a 401 once login_status no longer names the user, asking once at a time', async () => {
+    // lx19: 登录在 Folia 开着时到期：第一次 401 后问一次 login_status。没有 profile 的回答不清掉 session：
+    // 从没拿到这个 session 的后端也这样答，token 得留着，等对着发它的后端再问一次才可能活过来。
+    it('keeps the session after a 401 when login_status answers with an empty profile, asking once at a time', async () => {
         storage.set('online_provider:qq:cookie', CONFIRMED_COOKIE);
         const fetchMock = vi.fn(async (url: string) => (url.includes('/login/status')
             ? Response.json({ code: 200, data: {} })
@@ -547,10 +548,29 @@ describe('QQ Music Web transport', () => {
         const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
 
         await Promise.all(['a', 'b'].map(songmid => expect(requestQq('music_play', { songmid })).rejects.toMatchObject({ code: 'auth-required' })));
-        await vi.waitFor(() => expect(storage.has('online_provider:qq:cookie')).toBe(false));
-        expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/login/status'))).toHaveLength(1);
+        await vi.waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/login/status'))).toHaveLength(1));
+        expect(storage.get('online_provider:qq:cookie')).toBe(CONFIRMED_COOKIE);
+        // A later request still carries the session: it was not dropped.
         await expect(requestQq('music_play', { songmid: 'c' })).rejects.toMatchObject({ code: 'auth-required' });
-        expect(String(fetchMock.mock.calls.at(-1)?.[0])).not.toContain('cookie=');
+        expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('cookie=');
+    });
+
+    // lx19: 只有发这个 session 的后端自己用 401 拒了它，session 才算没了：transport 只把存着的 session
+    // 发给发它的后端。login_status 自己回 401，就清掉它，之后的歌按游客播放。
+    it('drops the session after a 401 once login_status itself refuses the session', async () => {
+        storage.set('online_provider:qq:cookie', CONFIRMED_COOKIE);
+        const requested: string[] = [];
+        const fetchMock = vi.fn(async (url: string) => {
+            requested.push(String(url));
+            return Response.json({ code: 401, message: 'Login required' }, { status: 401 });
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+        await expect(requestQq('music_play', { songmid: 'a' })).rejects.toMatchObject({ code: 'auth-required' });
+        await vi.waitFor(() => expect(storage.has('online_provider:qq:cookie')).toBe(false));
+        await expect(requestQq('music_play', { songmid: 'c' })).rejects.toMatchObject({ code: 'auth-required' });
+        expect(requested.at(-1)).not.toContain('cookie=');
     });
 
     // login_status 自己的 401 不再问；401 时存着的已经换成别的 session，也不问。
@@ -1147,10 +1167,12 @@ describe('QQ musicu requests', () => {
             try {
                 await expect(probeLocalQqBackend()).resolves.toBe(false);
                 await expect(probeLocalQqBackend()).resolves.toBe(false);
-                expect(fetchMock).toHaveBeenCalledTimes(1);
+                // The first probe of the run retries once: two failed attempts.
+                expect(fetchMock).toHaveBeenCalledTimes(2);
                 now += 31_000;
                 await expect(probeLocalQqBackend()).resolves.toBe(false);
-                expect(fetchMock).toHaveBeenCalledTimes(2);
+                // The re-probe after the TTL is not the first of the run: one attempt.
+                expect(fetchMock).toHaveBeenCalledTimes(3);
             } finally {
                 nowSpy.mockRestore();
             }
@@ -1204,7 +1226,9 @@ describe('QQ musicu requests', () => {
             const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
 
             await expect(requestQq('login_status')).resolves.toEqual({ code: 200, data: {} });
-            const requestUrl = new URL(String(fetchMock.mock.calls[1][0]));
+            // The first probe of the run retries once, so the Worker request is the third
+            // fetch call, not the second.
+            const requestUrl = new URL(String(fetchMock.mock.calls[2][0]));
             expect(requestUrl.origin).toBe('https://qq.example.test');
             expect(requestUrl.pathname).toBe('/login/status');
             expect(logSpy).toHaveBeenCalledWith('[QQ] backend: worker (local backend not reachable)');
@@ -1219,6 +1243,113 @@ describe('QQ musicu requests', () => {
             expect(fetchMock).toHaveBeenCalledTimes(1);
             const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
             expect(requestUrl.origin).toBe('https://qq.example.test');
+        });
+
+        // lx19: a stored session issued by the local backend must never be validated against
+        // the Worker. The Worker keeps its own session namespace and answers "no profile"
+        // for a local token, which the account read would take as expired and delete the
+        // token — one transient probe failure at a cold start would log the user out.
+        it('does not validate a stored local session against the Worker when the probe fails', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            storage.set('online_provider:qq:cookie', 'qqmusic_session=opaque-token');
+            storage.set('online_provider:qq:session-backend', 'local');
+            const fetchMock = vi.fn(async (url: string) => {
+                if (String(url).startsWith('http://127.0.0.1:3212/')) throw new TypeError('Failed to fetch');
+                return Response.json({ code: 200, data: {} });
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).rejects.toMatchObject({ code: 'unavailable' });
+            // Only the two probe attempts ran; no request ever reached the Worker.
+            expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith('http://127.0.0.1:3212/'))).toBe(true);
+            expect(storage.get('online_provider:qq:cookie')).toBe('qqmusic_session=opaque-token');
+        });
+
+        it('assumes a session stored before lx19 is local in the shell, so it is not validated against the Worker either', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            storage.set('online_provider:qq:cookie', 'qqmusic_session=opaque-token');
+            const fetchMock = vi.fn(async (url: string) => {
+                if (String(url).startsWith('http://127.0.0.1:3212/')) throw new TypeError('Failed to fetch');
+                return Response.json({ code: 200, data: {} });
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).rejects.toMatchObject({ code: 'unavailable' });
+            expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith('http://127.0.0.1:3212/'))).toBe(true);
+            expect(storage.get('online_provider:qq:cookie')).toBe('qqmusic_session=opaque-token');
+        });
+
+        it('still validates a Worker-issued session against the Worker when the probe fails', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            storage.set('online_provider:qq:cookie', 'qqmusic_session=opaque-token');
+            storage.set('online_provider:qq:session-backend', 'remote');
+            const fetchMock = vi.fn(async (url: string) => {
+                if (String(url).startsWith('http://127.0.0.1:3212/')) throw new TypeError('Failed to fetch');
+                return Response.json({ code: 200, data: { profile: { info: { nick: 'Lia' } } } });
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_status')).resolves.toEqual({ code: 200, data: { profile: { info: { nick: 'Lia' } } } });
+            const requestUrl = new URL(String(fetchMock.mock.calls.at(-1)![0]));
+            expect(requestUrl.origin).toBe('https://qq.example.test');
+            expect(requestUrl.pathname).toBe('/login/status');
+        });
+
+        it('lets a QR login fall back to the Worker when the probe fails', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            storage.set('online_provider:qq:cookie', 'qqmusic_session=opaque-token');
+            storage.set('online_provider:qq:session-backend', 'local');
+            const fetchMock = vi.fn(async (url: string) => {
+                if (String(url).startsWith('http://127.0.0.1:3212/')) throw new TypeError('Failed to fetch');
+                return Response.json({ code: 200, data: {} });
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            // A QR login establishes a new session rather than validating the stored one.
+            await expect(requestQq('login_qr_key')).resolves.toEqual({ code: 200, data: {} });
+            const requestUrl = new URL(String(fetchMock.mock.calls.at(-1)![0]));
+            expect(requestUrl.origin).toBe('https://qq.example.test');
+        });
+
+        it('retries the first probe of the run once, so a backend that answers a moment later is found', async () => {
+            const fetchMock = vi.fn()
+                .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                .mockResolvedValue(Response.json({}, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { probeLocalQqBackend } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(probeLocalQqBackend()).resolves.toBe(true);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+
+        it('records which backend issued the session when a QR login confirms it', async () => {
+            vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request: vi.fn() } } } });
+            const fetchMock = vi.fn(async (url: string) => {
+                if (String(url).startsWith('http://127.0.0.1:3212/login/qr/check')) {
+                    return Response.json({ code: 803, cookie: 'qqmusic_session=opaque-token' });
+                }
+                return Response.json({}, { status: 200 });
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_qr_check', { key: 'qr-key' })).resolves.toMatchObject({ code: 803 });
+            expect(storage.get('online_provider:qq:cookie')).toBe('qqmusic_session=opaque-token');
+            expect(storage.get('online_provider:qq:session-backend')).toBe('local');
+        });
+
+        it('records a Worker-issued session as remote when a QR login confirms it there', async () => {
+            const fetchMock = vi.fn(async () => Response.json({ code: 803, cookie: 'qqmusic_session=opaque-token' }));
+            vi.stubGlobal('fetch', fetchMock);
+            const { requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+
+            await expect(requestQq('login_qr_check', { key: 'qr-key' })).resolves.toMatchObject({ code: 803 });
+            expect(storage.get('online_provider:qq:cookie')).toBe('qqmusic_session=opaque-token');
+            expect(storage.get('online_provider:qq:session-backend')).toBe('remote');
         });
     });
 });

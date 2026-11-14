@@ -851,6 +851,31 @@ describe('qqProvider', () => {
         }
     });
 
+    // lx19: 401 is the backend that issued the session refusing it, so the token goes; an
+    // empty profile is not, because a backend that was never given the session answers the
+    // same way, and the token must survive so a later check against the right backend can
+    // revive the sign-in.
+    it('drops the stored session when the issuing backend refuses it with a 401', async () => {
+        requestMock.mockRejectedValueOnce(new OnlineProviderError('auth-required', 'QQMusicApi login required', 'qq'));
+
+        await expect(qqProvider.auth!.getLoginStatus()).resolves.toBeNull();
+        expect(clearSessionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the stored session when the backend answers with an empty profile', async () => {
+        requestMock.mockResolvedValueOnce({ code: 200, data: {} });
+
+        await expect(qqProvider.auth!.getLoginStatus()).resolves.toBeNull();
+        expect(clearSessionMock).not.toHaveBeenCalled();
+    });
+
+    it('does not drop the stored session when the sign-in ran out', async () => {
+        await qqProvider.auth!.signInRanOut!();
+
+        expect(clearSessionMock).not.toHaveBeenCalled();
+        expect(requestMock).not.toHaveBeenCalled();
+    });
+
     it('propagates non-auth login status failures', async () => {
         requestMock.mockRejectedValue(new OnlineProviderError('network', 'QQMusicApi request failed: 502', 'qq'));
 
