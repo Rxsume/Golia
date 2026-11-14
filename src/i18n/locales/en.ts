@@ -2612,6 +2612,8 @@ export default {
     "appUpdateAvailable": "New version {{version}} available",
     "appUpdateDownload": "Download",
     "appUpdatePreparingDownload": "Preparing download…",
+    "appUpdateDownloading": "Downloading {{percent}}%",
+    "appUpdateShare": "Share",
     "appUpdateDismiss": "Dismiss update notice",
     "appUpdateCheckFailed": "Check failed, please try again later",
     "updateUnsupported": "Unavailable",

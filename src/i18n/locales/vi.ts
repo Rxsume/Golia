@@ -2612,6 +2612,8 @@ export default {
     "appUpdateAvailable": "Có phiên bản mới {{version}}",
     "appUpdateDownload": "Tải xuống",
     "appUpdatePreparingDownload": "Đang chuẩn bị tải xuống…",
+    "appUpdateDownloading": "Đang tải xuống {{percent}}%",
+    "appUpdateShare": "Chia sẻ",
     "appUpdateDismiss": "Đóng thông báo cập nhật",
     "appUpdateCheckFailed": "Kiểm tra thất bại, vui lòng thử lại sau",
     "updateUnsupported": "Không khả dụng",

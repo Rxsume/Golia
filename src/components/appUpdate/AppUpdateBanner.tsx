@@ -1,8 +1,10 @@
 // src/components/appUpdate/AppUpdateBanner.tsx
 // The home banner a found update gets: one small dismissible strip at the top of the home
-// surface, never a dialog. Tapping it downloads the release's IPA file (accelerator first,
-// GitHub direct as fallback) and hands it to the system browser to save; closing it hides
-// it for the rest of this launch.
+// surface, never a dialog. Tapping it downloads the release's IPA file in-app (accelerator
+// first, GitHub direct as fallback) and, once downloaded, shares it through the system
+// share sheet so the listener picks 全能签 there; closing it hides it for the rest of
+// this launch. No .ipa asset, a device that cannot share files, or a failed download
+// all fall back to handing the address to the system browser.
 
 import React from 'react';
 import { Download, X } from 'lucide-react';
@@ -14,6 +16,7 @@ export const AppUpdateBanner: React.FC = () => {
     const status = useAppUpdateStore(state => state.status);
     const result = useAppUpdateStore(state => state.result);
     const dismissedTag = useAppUpdateStore(state => state.dismissedTag);
+    const downloaded = useAppUpdateStore(state => state.downloaded);
 
     if (status !== 'available' || !result?.releaseUrl || !result.latestTag || dismissedTag === result.latestTag) {
         return null;
@@ -29,7 +32,9 @@ export const AppUpdateBanner: React.FC = () => {
                 >
                     <Download size={14} className="shrink-0" />
                     <span className="truncate">{t('options.appUpdateAvailable', { version: result.latestTag })}</span>
-                    <span className="shrink-0 font-semibold">{t('options.appUpdateDownload')}</span>
+                    <span className="shrink-0 font-semibold">
+                        {downloaded ? t('options.appUpdateShare') : t('options.appUpdateDownload')}
+                    </span>
                 </button>
                 <button
                     type="button"

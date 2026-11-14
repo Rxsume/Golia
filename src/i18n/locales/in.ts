@@ -2612,6 +2612,8 @@ export default {
     "appUpdateAvailable": "Versi baru {{version}} tersedia",
     "appUpdateDownload": "Unduh",
     "appUpdatePreparingDownload": "Menyiapkan unduhan…",
+    "appUpdateDownloading": "Mengunduh {{percent}}%",
+    "appUpdateShare": "Bagikan",
     "appUpdateDismiss": "Tutup pemberitahuan pembaruan",
     "appUpdateCheckFailed": "Pemeriksaan gagal, coba lagi nanti",
     "updateUnsupported": "Tidak tersedia",

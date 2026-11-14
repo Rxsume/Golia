@@ -2612,6 +2612,8 @@ export default {
     "appUpdateAvailable": "发现新版本 {{version}}",
     "appUpdateDownload": "去下载",
     "appUpdatePreparingDownload": "正在准备下载…",
+    "appUpdateDownloading": "正在下载 {{percent}}%",
+    "appUpdateShare": "去分享",
     "appUpdateDismiss": "关闭更新提示",
     "appUpdateCheckFailed": "检查失败，请稍后重试",
     "updateUnsupported": "不可用",
