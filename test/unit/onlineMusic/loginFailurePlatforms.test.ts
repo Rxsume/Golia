@@ -425,7 +425,7 @@ describe('QQ Music', () => {
         expect(await thrown('check', () => omni.checkLogin('qq', 'qr-key'))).toMatchObject({ id: 'unknown', errorCode: 'invalid-response' });
     });
 
-    it('no-answer: a sign-in request that is not answered in 20 s (the key, the picture, the check); no other request is timed', async () => {
+    it('no-answer: a sign-in request that is not answered in 20 s (the key, the picture, the check); other requests get the 10 s backend limit', async () => {
         vi.useFakeTimers();
         desktop(3300);
         const asked = silent();
@@ -436,11 +436,17 @@ describe('QQ Music', () => {
         expect(String(asked.mock.calls.at(-1)![0])).toContain('/login/qr/create');
         expect((await unanswered('check', () => omni.checkLogin('qq', 'qr-key'), asked)).id).toBe('no-answer');
 
+        // Any other backend request gets the 10 s backend limit (QQ_BACKEND_REQUEST_LIMIT_MS):
+        // it carries an abort signal, leaves one timer, and fails at 10 s when unanswered.
         asked.mockClear();
-        void requestQq('login_status').catch(() => { });
+        const statusFailure = requestQq('login_status').then(() => null, (error: unknown) => error);
         await vi.advanceTimersByTimeAsync(0);
         expect(asked).toHaveBeenCalledTimes(1);
-        expect(asked.mock.calls[0][1]?.signal).toBeUndefined();
+        expect(asked.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+        expect(vi.getTimerCount()).toBe(1);
+        await vi.advanceTimersByTimeAsync(10_000);
+        const { OnlineRequestTimeout } = await import('@/services/onlineMusic/failure/onlineRequestLimit');
+        await expect(statusFailure).resolves.toBeInstanceOf(OnlineRequestTimeout);
         expect(vi.getTimerCount()).toBe(0);
     });
 });

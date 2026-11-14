@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // 推荐路由的响应形状取自 qq-music-api 3.3.0 的使用文档（docs/README.md「猜你喜欢、电台与推荐歌单」）；数字与名字是虚构示例。
 
 const requestMock = vi.hoisted(() => vi.fn());
+const requestMusicuMock = vi.hoisted(() => vi.fn());
 const transportState = vi.hoisted(() => ({ hasSession: true }));
 
 vi.mock('@/services/onlineMusic/qq/qqTransport', () => ({
     hasQqSession: () => transportState.hasSession,
     hasUsableQqSession: () => transportState.hasSession,
     requestQq: requestMock,
+    requestQqMusicu: requestMusicuMock,
 }));
 
 import { qqRecommendations } from '@/services/onlineMusic/qq/qqRecommendations';
@@ -32,6 +34,7 @@ const upstreamFailure = () => new OnlineProviderError('network', 'QQMusicApi fai
 describe('QQ recommendations', () => {
     beforeEach(() => {
         requestMock.mockReset();
+        requestMusicuMock.mockReset();
         transportState.hasSession = true;
         vi.spyOn(console, 'warn').mockImplementation(() => { });
     });
@@ -270,18 +273,79 @@ describe('QQ recommendations', () => {
             expect(requestMock.mock.calls.filter(call => call[0] === 'recommend_playlists').map(call => call[1])).toEqual([{ limit: 60 }, { limit: 1 }]);
         });
 
-        // 首页三块推荐一起取：推荐歌单失败不该把 FM 与日推一起拖下去。
-        it('degrades to no playlists when the request fails', async () => {
+        // 首页三块推荐一起取：推荐歌单失败不该把 FM 与日推一起拖下去；直连兜底也失败时才回 []。
+        it('degrades to no playlists when the request and the direct fallback fail', async () => {
             const failures = [upstreamFailure(), emptyAnswer()];
             requestMock.mockImplementation(async (operation: string) => {
                 if (operation === 'recommend_playlists') throw failures.shift();
                 return { code: 200, primaryModes: [], scenes: [] };
             });
+            requestMusicuMock.mockRejectedValue(new OnlineProviderError('network', 'QQ musicu unreachable', 'qq'));
             // Only the station card of Guess You Like is left, which comes from elsewhere.
             const playlistsOf = (collections: { personalFm?: unknown }[]) => collections.filter(collection => !collection.personalFm);
             expect(playlistsOf(await qqRecommendations.getRecommendedCollections!(10))).toEqual([]);
             expect(playlistsOf(await qqRecommendations.getRecommendedCollections!(10))).toEqual([]);
-            expect(console.warn).toHaveBeenCalledTimes(1);
+            expect(requestMusicuMock).toHaveBeenCalledTimes(2);
+            // 502 那次记两条（后端失败 + 直连失败），422 那次只记直连失败。
+            expect(console.warn).toHaveBeenCalledTimes(3);
+        });
+
+        // Worker 那路挂起/失败时，推荐歌单改走 musicu 直连的「为你推荐」。
+        it('falls back to the direct hot recommendations when the backend fails', async () => {
+            requestMock.mockImplementation(async (operation: string) => {
+                if (operation === 'recommend_playlists') throw upstreamFailure();
+                return { code: 200, primaryModes: [], scenes: [] };
+            });
+            requestMusicuMock.mockResolvedValue({
+                recomPlaylist: {
+                    code: 0,
+                    data: {
+                        page: 1,
+                        v_hot: [
+                            {
+                                content_id: 8075336924,
+                                title: '90后回忆 | MP3时代的流行歌曲',
+                                cover: 'http://qpic.y.qq.com/music_cover/abc/300?n=1',
+                                listen_num: 147866537,
+                                creator: 1247077595,
+                                rcmdcontent: '编辑推荐的歌单',
+                                rcmdtemplate: '编辑推荐',
+                            },
+                            { content_id: 0, title: '' },
+                        ],
+                    },
+                },
+            });
+
+            const collections = await qqRecommendations.getRecommendedCollections!(10);
+            // The Guess You Like station card comes from elsewhere; only the playlists matter here.
+            const playlists = collections.filter(collection => !collection.personalFm);
+
+            expect(requestMusicuMock).toHaveBeenCalledWith({
+                recomPlaylist: {
+                    module: 'playlist.HotRecommendServer',
+                    method: 'get_hot_recommend',
+                    param: { async: 1, cmd: 2 },
+                },
+            });
+            expect(playlists).toEqual([{
+                providerId: 'qq',
+                id: 8075336924,
+                name: '90后回忆 | MP3时代的流行歌曲',
+                type: 'playlist',
+                coverUrl: 'http://qpic.y.qq.com/music_cover/abc/300?n=1',
+                description: '编辑推荐的歌单',
+                playCount: 147866537,
+                providerData: { dissid: 8075336924 },
+            }]);
+        });
+
+        it('returns no playlists when the direct fallback is refused upstream', async () => {
+            requestMock.mockRejectedValue(upstreamFailure());
+            requestMusicuMock.mockResolvedValue({ recomPlaylist: { code: 40000, data: {} } });
+
+            const collections = await qqRecommendations.getRecommendedCollections!(10);
+            expect(collections.filter(collection => !collection.personalFm)).toEqual([]);
         });
     });
 });

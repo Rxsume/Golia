@@ -115,9 +115,9 @@ const ENDPOINTS: Record<QqOperation, string> = {
 
 // The requests a sign-in waits for. They get the sign-in's time limit.
 const LOGIN_REQUESTS: ReadonlySet<QqOperation> = new Set(['login_qr_key', 'login_qr_create', 'login_qr_check']);
-// The requests for a song's address and a collection's tracks. They get the limit below; no other
-// backend request has one. The requests sent to musicu directly (`requestQqMusicu`) have a limit of
-// their own, `QQ_MUSICU_REQUEST_LIMIT_MS`.
+// The requests for a song's address and a collection's tracks. They get the limit below; every
+// other backend request gets `QQ_BACKEND_REQUEST_LIMIT_MS`. The requests sent to musicu directly
+// (`requestQqMusicu`) have a limit of their own, `QQ_MUSICU_REQUEST_LIMIT_MS`.
 const ONLINE_REQUESTS: ReadonlySet<QqOperation> = new Set([
     'music_play', 'song_list_detail', 'user_playlist_detail', 'user_liked_songs', 'album_info',
     'user_cloud', 'recommend_toplist', 'radio_tracks',
@@ -126,6 +126,13 @@ const ONLINE_REQUESTS: ReadonlySet<QqOperation> = new Set([
 // row (qq-music-api, services/auth/qrLogin.js): GetVkey, a 5 s CDN probe, GetCdnDispatch and a second
 // 5 s probe, each call to QQ limited to 25 s (services/auth/httpClient.js): 60 s in all.
 export const QQ_ONLINE_REQUEST_LIMIT_MS = 70_000;
+
+// The limit for every other backend request (search, recommendations, account reads and the rest):
+// workers.dev is often unreachable or extremely slow from mainland China without a VPN, and a
+// connection there hangs instead of failing fast. Without a limit the request never returns,
+// stalling aggregated search (`Promise.all` in omni) and the home feed, and the anonymous search
+// fallback never gets a chance to run. A normal answer takes 1–2 s, so 10 s is five times that.
+export const QQ_BACKEND_REQUEST_LIMIT_MS = 10_000;
 
 // qq-music-api translates the native QR states into the Netease codes; 803 is the only one carrying a session.
 const QR_CONFIRMED_CODE = 803;
@@ -466,7 +473,8 @@ export const requestQq = async <T = unknown>(
         return { response: answer, body: await readJsonBody(answer) };
     };
     const { response, body } = await (LOGIN_REQUESTS.has(operation) ? withLoginRequestLimit(send)
-        : ONLINE_REQUESTS.has(operation) ? withOnlineRequestLimit(send, QQ_ONLINE_REQUEST_LIMIT_MS) : send());
+        : ONLINE_REQUESTS.has(operation) ? withOnlineRequestLimit(send, QQ_ONLINE_REQUEST_LIMIT_MS)
+            : withOnlineRequestLimit(send, QQ_BACKEND_REQUEST_LIMIT_MS));
     if (!response.ok) {
         // A missing, expired, rejected, or non-persisted backend session is surfaced uniformly as 401.
         // The session does not go at once: any route answers 401 when QQ refuses that one call (upstream 1000 / 104401 /

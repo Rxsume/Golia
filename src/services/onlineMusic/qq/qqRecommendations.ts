@@ -4,7 +4,8 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import { DEFAULT_PERSONAL_FM_CATALOG } from '../fmModes';
 import { normalizeQqCollection, normalizeQqSong } from './qqNormalize';
 import { getQqRecommendationPreferences, saveQqRecommendationPreferences } from './qqPreferences';
-import { hasUsableQqSession, requestQq, type QqOperation } from './qqTransport';
+import { hasUsableQqSession, requestQq, requestQqMusicu, type QqOperation } from './qqTransport';
+import { asRecord } from '../../../utils/record';
 import { getQqGuessYouLikeBatch, getQqGuessYouLikeCard, getQqGuessYouLikeCatalog, QQ_GUESS_YOU_LIKE_STATION } from './qqGuessYouLike';
 
 // src/services/onlineMusic/qq/qqRecommendations.ts
@@ -126,6 +127,37 @@ const dislikeSong = async (id: MediaId): Promise<{ removed: true }> => {
 // `/recommend/playlists` 的 limit 默认 25、最多 60；有会话就带凭证读，没有就匿名读。
 const RECOMMEND_PLAYLISTS_MAX = 60;
 
+// Worker 那路用不了时，推荐歌单改走 musicu 直连：`playlist.HotRecommendServer/get_hot_recommend`
+// 是 QQ 自己的「为你推荐」歌单，匿名可读（2026-11-14 直连实测：HTTP 200，12 条）。
+// 条目按 normalizeQqCollection 认的字段名转一手：content_id → dissid、cover → picUrl、
+// listen_num → play_cnt。上游没有回答或拒绝时回 []，由调用方按「没有推荐歌单」处理。
+const getRecommendedPlaylistsDirectly = async (limit: number): Promise<ProviderCollection[]> => {
+    const answer = await requestQqMusicu({
+        recomPlaylist: {
+            module: 'playlist.HotRecommendServer',
+            method: 'get_hot_recommend',
+            param: { async: 1, cmd: 2 },
+        },
+    });
+    const hot = answer.recomPlaylist;
+    if (hot.code !== 0) return [];
+    const items = asRecord(hot.data)?.v_hot;
+    if (!Array.isArray(items)) return [];
+    return items
+        .map((item: unknown) => {
+            const entry = asRecord(item) ?? {};
+            return normalizeQqCollection({
+                dissid: entry.content_id,
+                title: entry.title,
+                picUrl: entry.cover,
+                desc: entry.rcmdcontent || entry.rcmdtemplate,
+                play_cnt: entry.listen_num,
+            });
+        })
+        .filter((collection: ProviderCollection) => collection.id !== '' && Boolean(collection.name))
+        .slice(0, limit);
+};
+
 const getRecommendedPlaylists = async (limit: number): Promise<ProviderCollection[]> => {
     const safeLimit = Math.min(RECOMMEND_PLAYLISTS_MAX, Math.max(1, Math.floor(limit) || 1));
     try {
@@ -138,7 +170,13 @@ const getRecommendedPlaylists = async (limit: number): Promise<ProviderCollectio
     } catch (error) {
         // 首页三块推荐一起取，推荐歌单失败不该连 FM 和日推一起拖下去。
         if (!isEmptyAnswer(error)) console.warn('[QQProvider] recommended-playlists:failed', error);
-        return [];
+        // Worker 那路失败（超时、挂起、网络错）时走 musicu 直连；直连也失败时照旧回 []。
+        try {
+            return await getRecommendedPlaylistsDirectly(safeLimit);
+        } catch (directError) {
+            console.warn('[QQProvider] recommended-playlists-direct:failed', directError);
+            return [];
+        }
     }
 };
 

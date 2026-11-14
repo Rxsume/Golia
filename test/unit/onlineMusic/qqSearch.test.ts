@@ -18,6 +18,7 @@ vi.mock('@/services/onlineMusic/qq/qqLyricProvider', () => ({
 
 import { resetQqSearchFallbackMemory, searchQqCollections, searchQqSongs } from '@/services/onlineMusic/qq/qqSearch';
 import { OnlineProviderError } from '@/types/onlineMusic';
+import { OnlineRequestTimeout } from '@/services/onlineMusic/failure/onlineRequestLimit';
 
 // 后端 `/search` 原样交出的精简版搜索条目（字段按 qq-music-api 3.3.1 文档，标识符取公开曲目）。
 const LITE_ITEM = {
@@ -186,6 +187,9 @@ describe('searchQqSongs', () => {
         ['an old backend without the route', new OnlineProviderError('unsupported', 'QQMusicApi has no search route', 'qq', undefined, 404)],
         ['a session the backend no longer accepts', new OnlineProviderError('auth-required', 'QQMusicApi login required', 'qq', undefined, 401)],
         ['a backend that is not running', new OnlineProviderError('unavailable', 'Embedded QQMusicApi is not running', 'qq')],
+        // Worker 挂起时 transport 在 10 s 后抛 OnlineRequestTimeout：它不是 search.rejected，
+        // isSearchRejected 不认它，兜底照常触发。
+        ['a backend request that timed out', new OnlineRequestTimeout(10_000)],
     ])('falls back to the anonymous search on %s', async (_label, error) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         requestMock.mockRejectedValue(error);

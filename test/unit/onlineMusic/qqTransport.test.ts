@@ -638,6 +638,47 @@ describe('QQ Music Web transport', () => {
         });
     });
 
+    // workers.dev 在国内不用 VPN 时连接会挂起而不是快速失败：没有时限的后端请求会永远等下去，
+    // 拖住聚合搜索与首页推荐。search 与推荐这类请求 10 s 没有回答就算连不上。
+    it('fails a hanging backend search after 10 s instead of waiting forever', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+            const { QQ_BACKEND_REQUEST_LIMIT_MS, requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+            const { OnlineRequestTimeout } = await import('@/services/onlineMusic/failure/onlineRequestLimit');
+
+            expect(QQ_BACKEND_REQUEST_LIMIT_MS).toBe(10_000);
+            const failure = requestQq('search', { keyword: '周杰伦', type: 'song', page: 1, limit: 20 })
+                .then(() => null, (error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(9_000);
+            await expect(Promise.race([failure, Promise.resolve('pending')])).resolves.toBe('pending');
+            await vi.advanceTimersByTimeAsync(1_000);
+            await expect(failure).resolves.toBeInstanceOf(OnlineRequestTimeout);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    // 播放链路最慢 60 s 的那条仍是 70 s：10 s 的默认时限只给原来没有时限的请求。
+    it('keeps the 70 s limit for playback and collection reads', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+            const { QQ_ONLINE_REQUEST_LIMIT_MS, requestQq } = await import('@/services/onlineMusic/qq/qqTransport');
+            const { OnlineRequestTimeout } = await import('@/services/onlineMusic/failure/onlineRequestLimit');
+
+            expect(QQ_ONLINE_REQUEST_LIMIT_MS).toBe(70_000);
+            const failure = requestQq('music_play', { songmid: 'song-mid' })
+                .then(() => null, (error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(10_000);
+            await expect(Promise.race([failure, Promise.resolve('pending')])).resolves.toBe('pending');
+            await vi.advanceTimersByTimeAsync(60_000);
+            await expect(failure).resolves.toBeInstanceOf(OnlineRequestTimeout);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('maps an unreadable body to invalid-response', async () => {
         const fetchMock = vi.fn().mockResolvedValue(new Response('<html>bad gateway</html>', { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);
