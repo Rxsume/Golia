@@ -5,16 +5,17 @@
 // `fetch` are stubbed), so the tap flow is exercised end to end.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { downloadAppUpdate, shareAppUpdate, useAppUpdateStore } from '@/components/appUpdate/appUpdateStore';
+import { checkAppUpdate, downloadAppUpdate, shareAppUpdate, useAppUpdateStore } from '@/components/appUpdate/appUpdateStore';
 import type { AppUpdateCheckResult } from '@/services/appUpdate/appUpdateCheck';
 
-const { resolveIpaDownloadUrlMock, openOutsideLinkMock } = vi.hoisted(() => ({
+const { checkForAppUpdateMock, resolveIpaDownloadUrlMock, openOutsideLinkMock } = vi.hoisted(() => ({
+    checkForAppUpdateMock: vi.fn(),
     resolveIpaDownloadUrlMock: vi.fn(),
     openOutsideLinkMock: vi.fn(),
 }));
 
 vi.mock('@/services/appUpdate/appUpdateCheck', () => ({
-    checkForAppUpdate: vi.fn(),
+    checkForAppUpdate: checkForAppUpdateMock,
     resolveIpaDownloadUrl: resolveIpaDownloadUrlMock,
 }));
 
@@ -98,8 +99,36 @@ describe('downloadAppUpdate (lx18)', () => {
         expect(await state.downloaded?.blob.text()).toBe('abcd');
         expect(state.downloading).toBe(false);
         expect(state.downloadProgress).toBe(1);
-        expect(fetch).toHaveBeenCalledWith(acceleratedUrl);
+        expect(fetch).toHaveBeenCalledWith(acceleratedUrl, { signal: expect.any(AbortSignal) });
         expect(openOutsideLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('discards the download when a re-check lands a newer release mid-flight', async () => {
+        stubShareableNavigator();
+        let resolveFetch!: (response: Response) => void;
+        const fetchPromise = new Promise<Response>((resolve) => { resolveFetch = resolve; });
+        vi.mocked(fetch).mockReturnValue(fetchPromise);
+        const downloading = downloadAppUpdate();
+        await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+        // A manual re-check lands a newer release while the old IPA is still downloading.
+        checkForAppUpdateMock.mockResolvedValue(availableResult({ latestTag: 'v0.7.28-lx19', latestLx: 19 }));
+        await checkAppUpdate();
+        expect(useAppUpdateStore.getState().result?.latestTag).toBe('v0.7.28-lx19');
+        resolveFetch(streamedResponse(['ab'], 2));
+        await downloading;
+        const state = useAppUpdateStore.getState();
+        expect(state.downloaded).toBeNull();
+        expect(state.downloading).toBe(false);
+        expect(openOutsideLinkMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the browser when the download times out', async () => {
+        stubShareableNavigator();
+        vi.mocked(fetch).mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
+        await downloadAppUpdate();
+        expect(openOutsideLinkMock).toHaveBeenCalledWith(acceleratedUrl);
+        expect(useAppUpdateStore.getState().downloaded).toBeNull();
+        expect(useAppUpdateStore.getState().downloading).toBe(false);
     });
 
     it('does not download at all when the device cannot share files, and opens the browser', async () => {

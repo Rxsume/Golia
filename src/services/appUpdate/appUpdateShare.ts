@@ -70,41 +70,67 @@ export const canShareIpaFiles = (): boolean => {
     }
 };
 
+/** The stall budget for an IPA download: a hung mobile network aborts instead of leaving the row stuck on a progress percentage with no retry or cancel. */
+const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * A signal that aborts after `ms`. `AbortSignal.timeout` does this on modern webviews;
+ * older ones (it shipped after iOS 15) get a manual timer on an AbortController. The
+ * timer is cleared when the download settles, so it never fires after the fact.
+ */
+const createTimeoutSignal = (ms: number): { signal: AbortSignal; clear: () => void } => {
+    if (typeof AbortSignal.timeout === 'function') {
+        return { signal: AbortSignal.timeout(ms), clear: () => undefined };
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    return { signal: controller.signal, clear: () => clearTimeout(timer) };
+};
+
 /**
  * Fetches the IPA's bytes, reporting the fraction downloaded (a number 0–1, or null
  * when the server sends no Content-Length). A streaming reader keeps the progress
- * moving on a 65 MB file instead of one long silent wait. Rejects on a non-OK answer
- * or a network error; the caller falls back to the browser then.
+ * moving on a 65 MB file instead of one long silent wait. Rejects on a non-OK answer,
+ * a network error, or a stall longer than the timeout — the caller falls back to the
+ * browser on any of these. `timeoutMs` is only for tests; production always uses the
+ * 5-minute budget below.
  */
 export const downloadIpaFile = async (url: string, options?: {
     fetchFn?: typeof fetch;
     /** Called with the fraction downloaded, or null while the total is unknown. */
     onProgress?: (fraction: number | null) => void;
+    /** Stall budget in milliseconds; defaults to DOWNLOAD_TIMEOUT_MS. */
+    timeoutMs?: number;
 }): Promise<Blob> => {
     const fetchFn = options?.fetchFn ?? fetch;
-    const response = await fetchFn(url);
-    if (!response.ok) {
-        throw new Error(`update download answered ${response.status}`);
-    }
-    const total = Number(response.headers.get('Content-Length') ?? '') || 0;
-    const reader = response.body?.getReader();
-    if (!reader) {
-        return response.blob();
-    }
-    const chunks: Uint8Array[] = [];
-    let loaded = 0;
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-            break;
+    const timeout = createTimeoutSignal(options?.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
+    try {
+        const response = await fetchFn(url, { signal: timeout.signal });
+        if (!response.ok) {
+            throw new Error(`update download answered ${response.status}`);
         }
-        if (value) {
-            chunks.push(value);
-            loaded += value.byteLength;
-            options?.onProgress?.(total > 0 ? loaded / total : null);
+        const total = Number(response.headers.get('Content-Length') ?? '') || 0;
+        const reader = response.body?.getReader();
+        if (!reader) {
+            return response.blob();
         }
+        const chunks: Uint8Array[] = [];
+        let loaded = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            if (value) {
+                chunks.push(value);
+                loaded += value.byteLength;
+                options?.onProgress?.(total > 0 ? loaded / total : null);
+            }
+        }
+        return new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+    } finally {
+        timeout.clear();
     }
-    return new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
 };
 
 /**

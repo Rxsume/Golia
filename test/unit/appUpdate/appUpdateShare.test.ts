@@ -53,7 +53,7 @@ describe('downloadIpaFile', () => {
         });
         expect(await blob.text()).toBe('abcd');
         expect(progress).toEqual([0.5, 1]);
-        expect(fetchFn).toHaveBeenCalledWith(ipaUrl);
+        expect(fetchFn).toHaveBeenCalledWith(ipaUrl, { signal: expect.any(AbortSignal) });
     });
 
     it('reports null progress when the server sends no total', async () => {
@@ -69,6 +69,17 @@ describe('downloadIpaFile', () => {
     it('rejects on a non-OK answer, so the caller falls back to the browser', async () => {
         const fetchFn = vi.fn().mockResolvedValue(new Response('gone', { status: 404 }));
         await expect(downloadIpaFile(ipaUrl, { fetchFn })).rejects.toThrow('404');
+    });
+
+    it('aborts a stalled download after the timeout, so the caller falls back to the browser', async () => {
+        // A fetch that hangs until its signal aborts, like a stalled mobile network.
+        const hangingFetch = vi.fn().mockImplementation((_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+                reject(new DOMException('The operation timed out.', 'TimeoutError'));
+            });
+        }));
+        await expect(downloadIpaFile(ipaUrl, { fetchFn: hangingFetch, timeoutMs: 50 })).rejects.toThrow('timed out');
+        expect(hangingFetch).toHaveBeenCalledWith(ipaUrl, { signal: expect.any(AbortSignal) });
     });
 });
 

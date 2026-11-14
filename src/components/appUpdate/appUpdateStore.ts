@@ -168,19 +168,36 @@ export const downloadAppUpdate = async (): Promise<void> => {
         await openDownloadInBrowser(target);
         return;
     }
+    // The tag this download belongs to: a manual re-check may land a newer release
+    // while it is in flight (it clears `downloaded` and moves `result` on), and the
+    // share tap must never offer the older IPA while the UI shows the newer version.
+    const tagAtStart = result.latestTag;
     useAppUpdateStore.setState({ downloading: true, downloadProgress: null });
     let target = directUrl;
     try {
         target = await resolveIpaDownloadUrl(directUrl);
         const blob = await downloadIpaFile(target, {
-            onProgress: (fraction) => useAppUpdateStore.setState({ downloadProgress: fraction }),
+            onProgress: (fraction) => {
+                // Stale progress from a download a newer check already discarded.
+                if (useAppUpdateStore.getState().result?.latestTag === tagAtStart) {
+                    useAppUpdateStore.setState({ downloadProgress: fraction });
+                }
+            },
         });
+        if (useAppUpdateStore.getState().result?.latestTag !== tagAtStart) {
+            console.warn(`[AppUpdate] a newer check superseded ${tagAtStart} mid-download; discarding the stale IPA`);
+            return;
+        }
         useAppUpdateStore.setState({
             downloaded: { blob, fileName: fileNameFromDownloadUrl(target), downloadUrl: target },
             downloadProgress: 1,
         });
         console.log('[AppUpdate] update downloaded, ready to share');
     } catch (error) {
+        if (useAppUpdateStore.getState().result?.latestTag !== tagAtStart) {
+            console.warn(`[AppUpdate] download for ${tagAtStart} failed after a newer check; not opening the superseded release`, error);
+            return;
+        }
         console.warn('[AppUpdate] download failed, falling back to the browser', error);
         try {
             await openDownloadInBrowser(target);
