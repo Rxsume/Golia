@@ -2,7 +2,7 @@
 // The Golia in-app update check: tag parsing, the lx comparison, and the silent failure
 // contract (a bad request or an unparsable tag never surfaces to the listener).
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     APP_UPDATE_RELEASES_API_URL,
     buildAcceleratedDownloadUrl,
@@ -126,9 +126,16 @@ describe('download address (lx10)', () => {
         expect(buildAcceleratedDownloadUrl(direct)).toBe(accelerated);
     });
 
+    it('builds one accelerated address per candidate base', () => {
+        expect(buildAcceleratedDownloadUrl(direct, 'https://gh-proxy.com/')).toBe(
+            'https://gh-proxy.com/https://github.com/Rxsume/Golia/releases/download/v0.7.28-lx10/Folia_0.7.28-lx10.ipa',
+        );
+    });
+
     it('uses the accelerated address when the accelerator answers', async () => {
         const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
         await expect(resolveIpaDownloadUrl(direct, { fetchFn })).resolves.toBe(accelerated);
+        expect(fetchFn).toHaveBeenCalledTimes(3);
         expect(fetchFn).toHaveBeenCalledWith(
             accelerated,
             expect.objectContaining({ method: 'HEAD' }),
@@ -143,5 +150,84 @@ describe('download address (lx10)', () => {
     it('falls back to the direct address when the accelerator cannot be reached', async () => {
         const fetchFn = vi.fn().mockRejectedValue(new Error('network down'));
         await expect(resolveIpaDownloadUrl(direct, { fetchFn })).resolves.toBe(direct);
+    });
+});
+
+describe('download race (lx13)', () => {
+    const direct = 'https://github.com/Rxsume/Golia/releases/download/v0.7.28-lx13/Folia_0.7.28-lx13.ipa';
+    const ghProxyOrg = `https://gh-proxy.org/${direct}`;
+    const ghProxyCom = `https://gh-proxy.com/${direct}`;
+    const ghfastTop = `https://ghfast.top/${direct}`;
+
+    const ok = () => Promise.resolve(new Response(null, { status: 200 }));
+    const hang = () => new Promise<Response>(() => {});
+    const delayedOk = (ms: number) => (
+        () => new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(new Response(null, { status: 200 })), ms);
+        })
+    );
+
+    /** A fetch mock that answers per accelerator host, so the race can be steered. */
+    const probeFetch = (byHost: Record<string, () => Promise<Response>>) => (
+        vi.fn().mockImplementation((url: string) => {
+            const behaviour = byHost[new URL(url).hostname];
+            return behaviour ? behaviour() : Promise.reject(new Error(`unexpected probe url ${url}`));
+        })
+    );
+
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('the first accelerator to answer wins, whichever it is', async () => {
+        const slowFirst = probeFetch({ 'gh-proxy.org': delayedOk(60), 'gh-proxy.com': ok, 'ghfast.top': ok });
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn: slowFirst, timeoutMs: 500, raceTimeoutMs: 1000 }))
+            .resolves.toBe(ghProxyCom);
+
+        const fastFirst = probeFetch({ 'gh-proxy.org': ok, 'gh-proxy.com': delayedOk(60), 'ghfast.top': delayedOk(60) });
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn: fastFirst, timeoutMs: 500, raceTimeoutMs: 1000 }))
+            .resolves.toBe(ghProxyOrg);
+    });
+
+    it('a hanging candidate does not block the others', async () => {
+        const fetchFn = probeFetch({ 'gh-proxy.org': hang, 'gh-proxy.com': ok, 'ghfast.top': ok });
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn, timeoutMs: 50, raceTimeoutMs: 500 }))
+            .resolves.toBe(ghProxyCom);
+    });
+
+    it('falls back to the direct address when every candidate hangs, within the race cap', async () => {
+        const fetchFn = probeFetch({ 'gh-proxy.org': hang, 'gh-proxy.com': hang, 'ghfast.top': hang });
+        const started = Date.now();
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn, timeoutMs: 50, raceTimeoutMs: 100 }))
+            .resolves.toBe(direct);
+        expect(Date.now() - started).toBeLessThan(1000);
+    });
+
+    it('logs the winning accelerator host', async () => {
+        const fetchFn = probeFetch({ 'gh-proxy.org': delayedOk(60), 'gh-proxy.com': ok, 'ghfast.top': ok });
+        await resolveIpaDownloadUrl(direct, { fetchFn, timeoutMs: 500, raceTimeoutMs: 1000 });
+        expect(logSpy).toHaveBeenCalledWith('[AppUpdate] download via gh-proxy.com');
+    });
+
+    it('logs direct when every accelerator misses', async () => {
+        const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+        await resolveIpaDownloadUrl(direct, { fetchFn });
+        expect(logSpy).toHaveBeenCalledWith('[AppUpdate] download via direct');
+    });
+
+    it('uses the third candidate when the first two refuse', async () => {
+        const fetchFn = probeFetch({
+            'gh-proxy.org': () => Promise.resolve(new Response(null, { status: 404 })),
+            'gh-proxy.com': () => Promise.resolve(new Response(null, { status: 503 })),
+            'ghfast.top': ok,
+        });
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn })).resolves.toBe(ghfastTop);
     });
 });

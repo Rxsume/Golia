@@ -9,8 +9,18 @@ export const APP_UPDATE_RELEASES_API_URL = 'https://api.github.com/repos/Rxsume/
 /** Where a found release is downloaded from: the release page, opened in the system browser. */
 export const APP_UPDATE_RELEASES_PAGE_URL = 'https://github.com/Rxsume/Golia/releases';
 
-/** The GitHub accelerator the download goes through first (lx10): no deploy, no key. */
-export const APP_UPDATE_ACCELERATOR_BASE_URL = 'https://gh-proxy.org/';
+/**
+ * The GitHub accelerators the download races through first (lx13): no deploy, no key.
+ * Ordered fastest-first by the VM measurements (gh-proxy.org 12.8–24 MB/s, gh-proxy.com
+ * 8.8, ghfast.top 4.9); the race, not the order, decides on the device. Do not add
+ * jsDelivr (it cannot serve release attachments), mirror.ghproxy.com (dead) or
+ * ghproxy.com (it redirects to a homepage, not a file proxy).
+ */
+export const APP_UPDATE_ACCELERATOR_BASE_URLS = [
+    'https://gh-proxy.org/',
+    'https://gh-proxy.com/',
+    'https://ghfast.top/',
+] as const;
 
 /** The lx build this app was built as (`__LX_BUILD__`, 6 for lx6); 0 when the build did not stamp one. */
 export const getCurrentLxBuild = (): number => (
@@ -42,11 +52,13 @@ export type AppUpdateCheckResult = {
 /**
  * The accelerated address of a release download: the accelerator in front of the direct
  * GitHub address. Live-verified 2026-11-14 (lx9 IPA: HEAD answers 200, octet-stream,
- * `Access-Control-Allow-Origin: *`, served through Cloudflare).
+ * `Access-Control-Allow-Origin: *`, served through Cloudflare). The base defaults to the
+ * first candidate; the race passes each candidate explicitly.
  */
-export const buildAcceleratedDownloadUrl = (directUrl: string): string => (
-    `${APP_UPDATE_ACCELERATOR_BASE_URL}${directUrl}`
-);
+export const buildAcceleratedDownloadUrl = (
+    directUrl: string,
+    baseUrl: string = APP_UPDATE_ACCELERATOR_BASE_URLS[0],
+): string => `${baseUrl}${directUrl}`;
 
 /**
  * The lx number of a release tag (`v0.7.28-lx5` -> 5), or null when the tag carries none.
@@ -103,31 +115,62 @@ const readRelease = (value: unknown): { tag: string | null; url: string | null; 
     };
 };
 
+/** One candidate's probe: a HEAD; a non-OK answer counts as a miss, like a timeout. */
+const probeAccelerator = async (
+    url: string,
+    fetchFn: typeof fetch,
+    timeoutMs: number,
+): Promise<string> => {
+    const response = await fetchFn(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+        throw new Error(`accelerator probe answered ${response.status}`);
+    }
+    return url;
+};
+
 /**
- * The address a tap on "download" opens: the accelerated address when the accelerator
- * answers, the direct GitHub address otherwise. Never throws: any failure (a non-OK
- * answer, a timeout, no network) falls back to the direct address, so a tap always has
- * somewhere to go. The check is a HEAD, so it costs no download.
+ * The address a tap on "download" opens: the accelerators race in parallel and the first
+ * to answer wins; only when every accelerator misses (a non-OK answer, a timeout, no
+ * network) does it fall back to the direct GitHub address, so a tap always has somewhere
+ * to go. Never throws. The probes are HEADs, so the race costs no download. The chosen
+ * route is logged, so the device can tell which one a download took.
  */
 export const resolveIpaDownloadUrl = async (directUrl: string, options?: {
     fetchFn?: typeof fetch;
+    /** Per-candidate probe timeout (default 9000): crowded mobile networks need the slack. */
     timeoutMs?: number;
+    /** Overall cap for the race (default 10000): the whole decision never waits longer. */
+    raceTimeoutMs?: number;
 }): Promise<string> => {
-    const acceleratedUrl = buildAcceleratedDownloadUrl(directUrl);
+    const fetchFn = options?.fetchFn ?? fetch;
+    const timeoutMs = options?.timeoutMs ?? 9000;
+    const raceTimeoutMs = options?.raceTimeoutMs ?? 10000;
+    const candidates = APP_UPDATE_ACCELERATOR_BASE_URLS.map(
+        (base) => buildAcceleratedDownloadUrl(directUrl, base),
+    );
+    let raceTimer: ReturnType<typeof setTimeout> | undefined;
+    const raceDeadline = new Promise<never>((_resolve, reject) => {
+        raceTimer = setTimeout(() => reject(new Error('accelerator race timed out')), raceTimeoutMs);
+    });
     try {
-        const fetchFn = options?.fetchFn ?? fetch;
-        const timeoutMs = options?.timeoutMs ?? 5000;
-        const response = await fetchFn(acceleratedUrl, {
-            method: 'HEAD',
-            signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (response.ok) {
-            return acceleratedUrl;
-        }
+        const winner = await Promise.race([
+            Promise.any(candidates.map((url) => probeAccelerator(url, fetchFn, timeoutMs))),
+            raceDeadline,
+        ]);
+        console.log(`[AppUpdate] download via ${new URL(winner).hostname}`);
+        return winner;
     } catch (error) {
-        console.warn('[AppUpdate] accelerator unreachable, falling back to the direct download', error);
+        console.warn('[AppUpdate] accelerators unreachable, falling back to the direct download', error);
+        console.log('[AppUpdate] download via direct');
+        return directUrl;
+    } finally {
+        if (raceTimer !== undefined) {
+            clearTimeout(raceTimer);
+        }
     }
-    return directUrl;
 };
 
 /**
