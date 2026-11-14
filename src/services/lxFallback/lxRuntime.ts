@@ -1,8 +1,9 @@
 // src/services/lxFallback/lxRuntime.ts
-// The LX script runtime: runs one third-party LX music-URL script (the script file under
-// scripts/) in its own scope with an `lx` bridge, and asks it for a playback URL. This is
-// a TypeScript port of Golia's LXScriptSourceRunner (Beans), which runs these exact scripts
-// on iOS; the bridge surface, the request/response shapes and the URL extraction follow it
+// The LX script runtime: runs the built-in third-party LX music-URL scripts
+// (the script files under scripts/) each in its own scope with an `lx` bridge,
+// and asks them for a playback URL. This is a TypeScript port of Golia's
+// LXScriptSourceRunner (Beans), which runs these exact scripts on iOS; the
+// bridge surface, the request/response shapes and the URL extraction follow it
 // so the scripts take the same code paths they take there.
 
 import md5 from 'blueimp-md5';
@@ -12,10 +13,15 @@ import {
     lxBufferOf, utf8ToBytes, type LxBuffer,
 } from './lxBytes';
 import { lxHttpRequest, type LxHttpResponse, type LxRequestOptions } from './lxHttp';
+import huibqScript from './scripts/huibq-v1.2.0.js?raw';
 import kuchaScript from './scripts/kucha-v3.js?raw';
+import molanScript from './scripts/molan-v2.3.6.js?raw';
+import helloworldScript from './scripts/helloworld.js?raw';
+import stellarwaveScript from './scripts/stellarwave-v4.0.2.js?raw';
+import xinghaiScript from './scripts/xinghai-v2.3.17.js?raw';
 
 export type LxSource = 'wy' | 'tx' | 'kg';
-export type LxScriptId = 'kucha-v3';
+export type LxScriptId = 'huibq' | 'kucha-v3' | 'molan' | 'helloworld' | 'stellarwave' | 'xinghai';
 
 export interface LxScriptDefinition {
     id: LxScriptId;
@@ -24,8 +30,18 @@ export interface LxScriptDefinition {
     source: string;
 }
 
+// The race is parallel, first success wins; the order is the install order.
+// Huibq is first (it is the only one that returned real tx links for
+// both test songs inside the 2500ms budget); the rest are backups. Huibq is
+// patched (see scripts/huibq-v1.2.0.js): it sends the songmid, not the
+// numeric id, for tx, and rejects the backend's 'no link' stub URL.
 export const LX_SCRIPTS: readonly LxScriptDefinition[] = [
+    { id: 'huibq', name: 'Huibq', source: huibqScript },
     { id: 'kucha-v3', name: '裤衩', source: kuchaScript },
+    { id: 'molan', name: '墨澜', source: molanScript },
+    { id: 'helloworld', name: 'HelloWorld', source: helloworldScript },
+    { id: 'stellarwave', name: '星澜', source: stellarwaveScript },
+    { id: 'xinghai', name: '星海', source: xinghaiScript },
 ];
 
 /** The song identity handed to a script, in Golia's `musicInfo` shape. */
@@ -125,6 +141,19 @@ const valueAtPath = (obj: Record<string, unknown>, path: string): unknown => {
 };
 
 /**
+ * A URL the player cannot play: the encrypted audio containers (`.mgg` /
+ * `.mflac`) one platform's backends return. A script that resolves a song to
+ * one of these has not produced a playable URL — the browser audio element
+ * cannot decrypt them, and nothing in this player does — so the URL is
+ * rejected here and the race moves on to the next script instead of
+ * "winning" with an unplayable file.
+ */
+const isEncryptedAudioContainer = (url: string): boolean => {
+    const path = url.split(/[?#]/, 1)[0].toLowerCase();
+    return path.endsWith('.mgg') || path.endsWith('.mflac');
+};
+
+/**
  * Golia's `extractURLString`: a URL string (a `//` one gains `https:`), a JSON string
  * holding one, or an object/array holding one under a known key. Only the likely
  * containers are recursed into, so a cover URL is never picked up by mistake.
@@ -132,8 +161,13 @@ const valueAtPath = (obj: Record<string, unknown>, path: string): unknown => {
 export const extractLxUrl = (raw: unknown): string | null => {
     if (typeof raw === 'string') {
         const trimmed = raw.trim();
-        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-        if (trimmed.startsWith('//')) return `https:${trimmed}`;
+        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+            return isEncryptedAudioContainer(trimmed) ? null : trimmed;
+        }
+        if (trimmed.startsWith('//')) {
+            const url = `https:${trimmed}`;
+            return isEncryptedAudioContainer(url) ? null : url;
+        }
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
             try {
                 return extractLxUrl(JSON.parse(trimmed) as unknown);

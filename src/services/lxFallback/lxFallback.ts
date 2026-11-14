@@ -1,12 +1,13 @@
 // src/services/lxFallback/lxFallback.ts
 // The LX fallback: when a native provider cannot produce an audio URL, or only
-// produces a trial clip (`preview`), the one built-in LX script is asked for a
-// full one. It is installed on the omni audio hook,
+// produces a trial clip (`preview`), the built-in LX scripts are asked for a
+// full one. They race in parallel and the first success wins; the fallback is installed on the omni audio hook,
 // so it only runs after the native provider has already answered; a full URL from
 // the provider is never bypassed, and a trial is only kept when no script has a
-// full one. A 'tx' song is never sent to the backends with its numeric id (one
-// backend answers that with another song's URL), so the songmid is resolved first,
-// from the song itself or, failing that, from a detail lookup.
+// full one. A 'tx' song's songmid is resolved first, from the song itself or,
+// failing that, from a detail lookup, because one backend answers a numeric id
+// with another song's URL; the scripts receive the songmid in the musicInfo and
+// are expected to send it for tx (huibq is patched to do so).
 
 import type { SongResult } from '../../types';
 import type { PlaybackSourceRef } from '../../types/onlineMusic';

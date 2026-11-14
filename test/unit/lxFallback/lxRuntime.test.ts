@@ -7,6 +7,17 @@ import { buildLxMusicInfo, extractLxUrl } from '@/services/lxFallback/lxRuntime'
 describe('extractLxUrl', () => {
     it('takes a plain URL string', () => {
         expect(extractLxUrl('https://example.com/a.mp3')).toBe('https://example.com/a.mp3');
+        expect(extractLxUrl('https://example.com/a.flac')).toBe('https://example.com/a.flac');
+    });
+
+    it('rejects QQ encrypted containers (.mgg / .mflac)', () => {
+        // The browser audio element cannot decrypt these; a script that returns
+        // one has not produced a playable URL, so it must not win the race.
+        expect(extractLxUrl('https://wx.music.tc.qq.com/O8M0002UO9JU46OWnz.mgg?guid=x&vkey=y')).toBeNull();
+        expect(extractLxUrl('https://example.com/a.mflac')).toBeNull();
+        expect(extractLxUrl('https://example.com/a.MGG')).toBeNull();
+        expect(extractLxUrl({ url: 'https://example.com/a.mgg' })).toBeNull();
+        expect(extractLxUrl('//example.com/a.mgg')).toBeNull();
     });
 
     it('adds https to a protocol-relative URL', () => {
