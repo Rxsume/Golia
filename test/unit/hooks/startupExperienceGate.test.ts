@@ -4,6 +4,8 @@ import { resolveStartupExperienceStep } from '../../../src/hooks/useStartupExper
 // test/unit/hooks/startupExperienceGate.test.ts
 
 const readyState = {
+    hasSeenGoliaWelcome: true,
+    isGoliaWelcomeOpen: false,
     isCurrentRelease: true,
     hasSeenPonder: false,
     hasFinishedThisRelease: false,
@@ -61,6 +63,24 @@ describe('startup experience gate', () => {
 
     it('stays quiet on builds without release notes', () => {
         expect(resolveStartupExperienceStep({ ...readyState, isCurrentRelease: false })).toBeNull();
+    });
+
+    // lx10: the Golia first-launch dialog comes first and only once per install.
+    it('shows the Golia welcome first, once per install, ahead of the release sequence', () => {
+        const fresh = { ...readyState, hasSeenGoliaWelcome: false };
+        expect(resolveStartupExperienceStep(fresh)).toBe('golia-welcome');
+        // Seen it: the release sequence runs as before.
+        expect(resolveStartupExperienceStep({ ...fresh, hasSeenGoliaWelcome: true })).toBe('release-notes');
+        // Once per install, not once per release: it opens even on a build without release notes.
+        expect(resolveStartupExperienceStep({ ...fresh, isCurrentRelease: false })).toBe('golia-welcome');
+    });
+
+    it('waits for the Golia welcome to close before advancing', () => {
+        expect(resolveStartupExperienceStep({
+            ...readyState,
+            hasSeenGoliaWelcome: false,
+            isGoliaWelcomeOpen: true,
+        })).toBeNull();
     });
 
     // 2026-10-10：「资料库界面」那一页每个安装都问一次，不看版本（发版说明的版本号每版都变，不能拿来门控它）。

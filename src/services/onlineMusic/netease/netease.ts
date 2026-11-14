@@ -1213,7 +1213,31 @@ export const neteaseApi = {
 
   // --- Playlist Data ---
   getPlaylistTracks: async (id: number, limit = 50, offset = 0) => {
-    const res = await fetchWithCreds(`/playlist/track/all?id=${id}&limit=${limit}&offset=${offset}`, {}, 'online');
+    if (await hasConfiguredApiBase()) {
+      const res = await fetchWithCreds(`/playlist/track/all?id=${id}&limit=${limit}&offset=${offset}`, {}, 'online');
+      res.songs = mergeSongsWithPrivileges(res.songs, res.privileges);
+      return res;
+    }
+    // Direct weapi (module/playlist_track_all.js): the backend does the same two
+    // steps, because the detail call's own `tracks` is not a reliable page — the
+    // ids are read first, then the page's songs are fetched for the ids asked for.
+    // Live-verified 2026-11-14 on a public playlist (3778678, 200 tracks): the
+    // detail answers 200 trackIds and song/detail answers the requested page.
+    // Without this, opening any NetEase playlist in the shell (no backend) throws
+    // NETEASE_API_BASE_MISSING and the list stays empty (lx10).
+    const detail = await requestNeteaseWeapi('v6/playlist/detail', { id, n: 100000, s: 0 });
+    // A refusing answer (a private playlist, no such playlist) is the detail's own
+    // verdict: hand it back so the provider's refusal check throws the right error.
+    // (No import of the failure helper here: it imports this file, so importing it
+    // back would be circular.)
+    if (detail.code !== undefined && Number(detail.code) !== 200) return detail;
+    const playlist = detail.playlist as { trackIds?: Array<{ id: number }> } | undefined;
+    const trackIds = Array.isArray(playlist?.trackIds) ? playlist.trackIds : [];
+    const pageIds = trackIds.slice(offset, offset + limit);
+    if (pageIds.length === 0) return { code: 200, songs: [], privileges: [] };
+    const res = await requestNeteaseWeapi('v3/song/detail', {
+      c: JSON.stringify(pageIds.map(item => ({ id: item.id }))),
+    });
     res.songs = mergeSongsWithPrivileges(res.songs, res.privileges);
     return res;
   },

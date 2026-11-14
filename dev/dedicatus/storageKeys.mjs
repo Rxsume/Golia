@@ -171,6 +171,7 @@ export const STORAGE_KEYS = [
     'web:global_lyric_timeline_offset_ms',
     'web:global_shortcut_bindings',
     'web:global_shortcut_portal_enabled',
+    'web:golia_welcome_shown',
     'web:gpu_preference',
     'web:grid3d_card_style',
     'web:grid_action_button_slide_target',

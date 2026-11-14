@@ -5,13 +5,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     APP_UPDATE_RELEASES_API_URL,
+    buildAcceleratedDownloadUrl,
     checkForAppUpdate,
     isNewerLxBuild,
     parseLxNumber,
+    resolveIpaDownloadUrl,
 } from '@/services/appUpdate/appUpdateCheck';
 
-const releaseResponse = (tag: string, url = 'https://github.com/Rxsume/Golia/releases/tag/v0.7.28-lx7'): Response => (
-    new Response(JSON.stringify({ tag_name: tag, html_url: url }), { status: 200 })
+const ipaAsset = (tag: string) => ({
+    name: `Folia_0.7.28-lx${tag.split('-lx')[1]}.ipa`,
+    browser_download_url: `https://github.com/Rxsume/Golia/releases/download/${tag}/Folia_0.7.28-lx${tag.split('-lx')[1]}.ipa`,
+});
+
+const releaseResponse = (
+    tag: string,
+    url = 'https://github.com/Rxsume/Golia/releases/tag/v0.7.28-lx7',
+    assets: unknown[] = [ipaAsset(tag)],
+): Response => (
+    new Response(JSON.stringify({ tag_name: tag, html_url: url, assets }), { status: 200 })
 );
 
 describe('parseLxNumber', () => {
@@ -54,7 +65,15 @@ describe('checkForAppUpdate', () => {
             latestLx: 7,
             latestTag: 'v0.7.28-lx7',
             releaseUrl: 'https://github.com/Rxsume/Golia/releases/tag/v0.7.28-lx7',
+            downloadUrl: 'https://github.com/Rxsume/Golia/releases/download/v0.7.28-lx7/Folia_0.7.28-lx7.ipa',
         });
+    });
+
+    it('carries no download address when the release has no .ipa asset', async () => {
+        const fetchFn = vi.fn().mockResolvedValue(releaseResponse('v0.7.28-lx7', undefined, []));
+        const result = await checkForAppUpdate({ fetchFn, currentLx: 6 });
+        expect(result.downloadUrl).toBeUndefined();
+        expect(result.releaseUrl).toBe('https://github.com/Rxsume/Golia/releases/tag/v0.7.28-lx7');
     });
 
     it('reports latest when the release lx is the current build', async () => {
@@ -96,5 +115,33 @@ describe('checkForAppUpdate', () => {
             available: false,
             outcome: 'unavailable',
         });
+    });
+});
+
+describe('download address (lx10)', () => {
+    const direct = 'https://github.com/Rxsume/Golia/releases/download/v0.7.28-lx10/Folia_0.7.28-lx10.ipa';
+    const accelerated = 'https://gh-proxy.org/https://github.com/Rxsume/Golia/releases/download/v0.7.28-lx10/Folia_0.7.28-lx10.ipa';
+
+    it('puts the accelerator in front of the direct GitHub address', () => {
+        expect(buildAcceleratedDownloadUrl(direct)).toBe(accelerated);
+    });
+
+    it('uses the accelerated address when the accelerator answers', async () => {
+        const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn })).resolves.toBe(accelerated);
+        expect(fetchFn).toHaveBeenCalledWith(
+            accelerated,
+            expect.objectContaining({ method: 'HEAD' }),
+        );
+    });
+
+    it('falls back to the direct address when the accelerator refuses', async () => {
+        const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn })).resolves.toBe(direct);
+    });
+
+    it('falls back to the direct address when the accelerator cannot be reached', async () => {
+        const fetchFn = vi.fn().mockRejectedValue(new Error('network down'));
+        await expect(resolveIpaDownloadUrl(direct, { fetchFn })).resolves.toBe(direct);
     });
 });

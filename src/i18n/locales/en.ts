@@ -2082,9 +2082,6 @@ export default {
     "communityDiscord": "Discord server",
     "communityDiscordHint": "Open the invite link",
     "joinDiscord": "Join the Discord community",
-    "communityQq": "QQ self-help group",
-    "communityQqHint": "{{number}} · click to copy",
-    "qqGroupNumberCopied": "Group number copied",
     "releaseNotes": "What's new",
     "releaseNotesDescription": "Review the changes in this version",
     "majorUpdateLabel": "{{codename}} Update · Major update",
@@ -2614,6 +2611,7 @@ export default {
     "appUpdateLatest": "You're up to date",
     "appUpdateAvailable": "New version {{version}} available",
     "appUpdateDownload": "Download",
+    "appUpdatePreparingDownload": "Preparing download…",
     "appUpdateDismiss": "Dismiss update notice",
     "appUpdateCheckFailed": "Check failed, please try again later",
     "updateUnsupported": "Unavailable",
@@ -6806,5 +6804,10 @@ export default {
         "select": "Drag a box on an empty spot to select the cards inside it; {{mod}}-click a card to add or remove it. A panel floats beside the selected cards: add to queue, add to playlist, take out, clear selection. When the selection mixes sources, add to playlist is greyed out."
       }
     }
+  },
+  "goliaWelcome": {
+    "title": "Welcome to Golia",
+    "line1": "Golia — dedicated player by 酸甜贤",
+    "line2": "Follow the WeChat official account: 玻璃映海"
   }
 } as const;

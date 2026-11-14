@@ -30,6 +30,7 @@ import { useVisualizerAroundWall, wallExitCompleted, WALL_LAYER } from './compon
 import { useMorphKeepsHost } from './components/collectionFlight';
 import { UserGuideModal } from './components/modal/UserGuideModal';
 import ReleaseNotesDialog from './components/modal/ReleaseNotesDialog';
+import GoliaWelcomeDialog from './components/modal/GoliaWelcomeDialog';
 import LegacyModelsPrompt from './components/modal/LegacyModelsPrompt';
 import { PlaybackEntryViewPrompt } from './components/modal/playback-entry-view/PlaybackEntryViewPrompt';
 import { LatticeFmNotice } from './components/modal/playback-entry-view/LatticeFmNotice';
@@ -2989,6 +2990,11 @@ export default function App() {
                 isOpen={startupExperience.isReleaseNotesOpen}
                 isDaylight={isDaylight}
                 onClose={startupExperience.closeReleaseNotes}
+            />
+            <GoliaWelcomeDialog
+                isOpen={startupExperience.isGoliaWelcomeOpen}
+                isDaylight={isDaylight}
+                onClose={startupExperience.closeGoliaWelcome}
             />
             <UserGuideModal theme={theme} />
             <PlaybackEntryViewPrompt theme={theme} />

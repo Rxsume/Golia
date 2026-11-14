@@ -149,15 +149,28 @@ export function usePlaybackTransportController({
         const shouldAutoplay = () => wantsPlayback.current && isSameSource();
 
         setupAudioAnalyzer();
+        // An interruption suspends the context, and awaiting its resume before play() strands the
+        // resume: the session belongs to the other app until our element plays, so a resume that
+        // waits on the session can hang forever while play() — the call that takes the session
+        // back — never runs. The await also breaks the user-gesture chain, so play() after it is
+        // treated as autoplay and refused. Start the resume without awaiting it, press play
+        // first, and make sure the context is running once the element is sounding.
+        let contextResume: Promise<void> | null = null;
         if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-            try {
-                await audioContextRef.current.resume();
-            } catch (error) {
-                if (!isCurrent()) return;
-                throw error;
-            }
+            contextResume = audioContextRef.current.resume().catch(() => {});
         }
         if (!isCurrent()) return;
+        // One microtask, then check again — only when a context resume was actually started.
+        // The old code got this yield for free from awaiting the context resume, and a pause
+        // or route change issued in the same tick must still be able to cancel this resume
+        // before the element is pressed. When the context is already running there is no
+        // pending resume, so play is pressed at once, as before. A single microtask does not
+        // break the user-gesture chain (transient activation lasts seconds) and does not wait
+        // on the resume, so a hanging resume still cannot strand the play.
+        if (contextResume) {
+            await Promise.resolve();
+            if (!isCurrent()) return;
+        }
 
         syncOutputGain(getTargetPlaybackVolume(), 0);
         // A failed refresh of an address that ran out still falls back to the old one below, as before.
@@ -186,6 +199,19 @@ export function usePlaybackTransportController({
         try {
             await audio.play();
             if (!isCurrent()) { playbackFade.abortFadeIn(fadeToken); return; }
+            // The session is ours again now: the context must be running for the element to be
+            // heard through the graph. A resume still pending gets its chance here; one that
+            // already failed is tried once more. Still suspended afterwards, the element plays
+            // silently — warned, not silent, so the failure is diagnosable.
+            if (contextResume) {
+                await contextResume;
+                if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+                    await audioContextRef.current.resume().catch(() => {});
+                }
+                if (audioContextRef.current && audioContextRef.current.state !== 'running') {
+                    console.warn('[Playback] AudioContext still suspended after resume; the element is playing silently');
+                }
+            }
             playbackFade.runFadeIn(fadeToken);
             setPlayerState(PlayerState.PLAYING);
         } catch (error) {

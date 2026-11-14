@@ -1594,6 +1594,7 @@ export default {
     "sourceNetease": "NetEase",
     "sourceLocal": "Nội bộ",
     "sourceNavidrome": "Navidrome",
+    "aggregatedSources": "Tất cả nền tảng",
     "playTrack": "Phát bài hát",
     "error": "Tìm kiếm thất bại. Thử lại sau.",
     "retry": "Thử lại",
@@ -2081,9 +2082,6 @@ export default {
     "communityDiscord": "Máy chủ Discord",
     "communityDiscordHint": "Mở liên kết mời",
     "joinDiscord": "Tham gia cộng đồng Discord",
-    "communityQq": "Nhóm hỗ trợ QQ",
-    "communityQqHint": "{{number}} · nhấp để sao chép",
-    "qqGroupNumberCopied": "Đã sao chép số nhóm",
     "releaseNotes": "Có gì mới",
     "releaseNotesDescription": "Xem các thay đổi trong phiên bản này",
     "majorUpdateLabel": "Cập nhật {{codename}} · Bản cập nhật lớn",
@@ -2613,6 +2611,7 @@ export default {
     "appUpdateLatest": "Đã là phiên bản mới nhất",
     "appUpdateAvailable": "Có phiên bản mới {{version}}",
     "appUpdateDownload": "Tải xuống",
+    "appUpdatePreparingDownload": "Đang chuẩn bị tải xuống…",
     "appUpdateDismiss": "Đóng thông báo cập nhật",
     "appUpdateCheckFailed": "Kiểm tra thất bại, vui lòng thử lại sau",
     "updateUnsupported": "Không khả dụng",
@@ -6805,5 +6804,10 @@ export default {
         "select": "Kéo một khung ở chỗ trống để chọn các thẻ bên trong; {{mod}}-nhấn một thẻ để thêm hoặc bỏ chọn. Một bảng nổi bên cạnh các thẻ đã chọn: thêm vào hàng đợi, thêm vào danh sách phát, bỏ ra, bỏ chọn. Khi mục chọn đến từ nhiều nguồn, thêm vào danh sách phát sẽ bị mờ."
       }
     }
+  },
+  "goliaWelcome": {
+    "title": "Chào mừng đến với Golia",
+    "line1": "Golia — trình phát chuyên dụng của 酸甜贤",
+    "line2": "Theo dõi tài khoản WeChat chính thức: 玻璃映海"
   }
 } as const;

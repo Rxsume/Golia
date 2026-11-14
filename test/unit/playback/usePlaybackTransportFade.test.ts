@@ -421,6 +421,65 @@ describe('resumePlayback', () => {
         expect(audio.pause).not.toHaveBeenCalled();
         expect(playbackFade.isFadingOut()).toBe(false);
     });
+
+    // lx10: another app's song interrupted this one — the element is paused and the context
+    // suspended. The resume must not wait on the context before pressing play: the session
+    // belongs to the other app until our element plays, so awaiting resume() first can hang
+    // forever while play() never runs, and the await breaks the user-gesture chain so play()
+    // is refused as autoplay.
+    it('presses play even while the context resume never settles (interruption)', async () => {
+        graph.setState('suspended');
+        audio.paused = true;
+        let resolveResume: (() => void) | undefined;
+        graph.resume.mockImplementation(() => new Promise<void>(resolve => {
+            resolveResume = () => { graph.setState('running'); resolve(); };
+        }));
+        const { resumePlayback } = buildTransport();
+
+        const promise = resumePlayback();
+        // Let the microtasks run: play() must be reached while resume() is still pending.
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        expect(audio.play).toHaveBeenCalledTimes(1);
+        expect(graph.context.state).toBe('suspended');
+
+        // The session switch lets the context wake; the resume then finishes.
+        resolveResume!();
+        await promise;
+        expect(storeMock.setPlayerState).toHaveBeenLastCalledWith(PlayerState.PLAYING);
+    });
+
+    it('retries the context resume after play when the first one failed (interruption)', async () => {
+        graph.setState('suspended');
+        audio.paused = true;
+        let calls = 0;
+        graph.resume.mockImplementation(async () => {
+            calls += 1;
+            if (calls === 1) throw new Error('interrupted');
+            graph.setState('running');
+        });
+        const { resumePlayback } = buildTransport();
+
+        await resumePlayback();
+        expect(audio.play).toHaveBeenCalledTimes(1);
+        expect(graph.resume).toHaveBeenCalledTimes(2);
+        expect(storeMock.setPlayerState).toHaveBeenLastCalledWith(PlayerState.PLAYING);
+    });
+
+    it('still plays the element when the context never wakes (interruption)', async () => {
+        graph.setState('suspended');
+        audio.paused = true;
+        graph.resume.mockImplementation(async () => {
+            // The session stays with the other app: resume() resolves but wakes nothing.
+        });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { resumePlayback } = buildTransport();
+
+        await resumePlayback();
+        expect(audio.play).toHaveBeenCalledTimes(1);
+        expect(storeMock.setPlayerState).toHaveBeenLastCalledWith(PlayerState.PLAYING);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('still suspended'));
+        warn.mockRestore();
+    });
 });
 
 describe('quick toggles', () => {

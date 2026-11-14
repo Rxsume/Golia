@@ -1,13 +1,13 @@
 // src/components/appUpdate/AppUpdateBanner.tsx
 // The home banner a found update gets: one small dismissible strip at the top of the home
-// surface, never a dialog. Tapping it opens the release page in the system browser; closing
-// it hides it for the rest of this launch.
+// surface, never a dialog. Tapping it downloads the release's IPA file (accelerator first,
+// GitHub direct as fallback) and hands it to the system browser to save; closing it hides
+// it for the rest of this launch.
 
 import React from 'react';
 import { Download, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { openOutsideLink } from '../../utils/system/outsideLink';
-import { dismissAppUpdateBanner, useAppUpdateStore } from './appUpdateStore';
+import { dismissAppUpdateBanner, downloadAppUpdate, useAppUpdateStore } from './appUpdateStore';
 
 export const AppUpdateBanner: React.FC = () => {
     const { t } = useTranslation();
@@ -24,7 +24,7 @@ export const AppUpdateBanner: React.FC = () => {
             <div className="pointer-events-auto flex min-w-0 max-w-full items-center gap-2 rounded-full bg-[var(--st-accent)] py-2 pl-3 pr-1.5 text-[13px] font-medium leading-5 text-[color:var(--st-on-accent)] shadow-lg">
                 <button
                     type="button"
-                    onClick={() => void openOutsideLink(result.releaseUrl ?? '')}
+                    onClick={() => void downloadAppUpdate()}
                     className="flex min-w-0 items-center gap-1.5"
                 >
                     <Download size={14} className="shrink-0" />

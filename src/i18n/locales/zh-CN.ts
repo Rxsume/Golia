@@ -2082,9 +2082,6 @@ export default {
     "communityDiscord": "Discord 社区",
     "communityDiscordHint": "打开邀请链接",
     "joinDiscord": "加入 Discord 社区",
-    "communityQq": "QQ 自助交流群",
-    "communityQqHint": "{{number}} · 点击复制群号",
-    "qqGroupNumberCopied": "群号已复制",
     "releaseNotes": "版本更新",
     "releaseNotesDescription": "查看这个版本带来的变化",
     "majorUpdateLabel": "{{codename}} Update · 重大更新",
@@ -2614,6 +2611,7 @@ export default {
     "appUpdateLatest": "已是最新版本",
     "appUpdateAvailable": "发现新版本 {{version}}",
     "appUpdateDownload": "去下载",
+    "appUpdatePreparingDownload": "正在准备下载…",
     "appUpdateDismiss": "关闭更新提示",
     "appUpdateCheckFailed": "检查失败，请稍后重试",
     "updateUnsupported": "不可用",
@@ -6806,5 +6804,10 @@ export default {
         "select": "在空白处拖出一个框，框住的卡片就选中了；按住 {{mod}} 点卡片可以逐张加减。选中的卡片旁边浮出一块板：入队、加入歌单、移出、取消选择。选中的来自不同来源时，加入歌单是灰的。"
       }
     }
+  },
+  "goliaWelcome": {
+    "title": "欢迎使用 Golia",
+    "line1": "Golia酸甜贤专用播放器",
+    "line2": "关注公众号：玻璃映海"
   }
 } as const;

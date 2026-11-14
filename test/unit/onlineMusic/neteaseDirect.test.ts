@@ -276,4 +276,84 @@ describe('NetEase direct transport (no backend configured)', () => {
             expect.anything(),
         );
     });
+
+    it('reads a playlist\'s tracks straight from the platform (lx10)', async () => {
+        // The backend's /playlist/track/all does the same two steps (upstream
+        // module/playlist_track_all.js): v6/playlist/detail for the track ids,
+        // then v3/song/detail for the page's songs. Shapes of the live answers,
+        // 2026-11-14 (public playlist 3778678, 200 tracks).
+        const request = nativeRequest({
+            'music.163.com/weapi/v6/playlist/detail': JSON.stringify({
+                code: 200,
+                playlist: {
+                    id: 3778678, name: '热歌榜', trackCount: 200,
+                    trackIds: Array.from({ length: 200 }, (_, i) => ({ id: 1000 + i })),
+                },
+            }),
+            'music.163.com/weapi/v3/song/detail': JSON.stringify({
+                code: 200,
+                songs: Array.from({ length: 5 }, (_, i) => ({
+                    id: 1010 + i, name: `Song ${1010 + i}`,
+                    ar: [{ id: 1, name: 'Singer' }],
+                    al: { id: 1, name: 'Album', picUrl: 'https://p1.music.126.net/cover.jpg' },
+                    dt: 200000, fee: 0,
+                })),
+                privileges: Array.from({ length: 5 }, (_, i) => ({ id: 1010 + i, fee: 0 })),
+            }),
+        });
+        const fetchMock = vi.fn().mockRejectedValue(new Error('fetch must not be called'));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        // Page 3 of 5 (offset 10, limit 5): the ids come from the detail's trackIds.
+        const res = await neteaseApi.getPlaylistTracks(3778678, 5, 10);
+        expect(res.songs).toHaveLength(5);
+        expect(res.songs.map((song: { id: number }) => song.id)).toEqual([1010, 1011, 1012, 1013, 1014]);
+        const urls = request.mock.calls.map(call => (call[0] as { url: string }).url);
+        expect(urls).toEqual([
+            'https://music.163.com/weapi/v6/playlist/detail',
+            'https://music.163.com/weapi/v3/song/detail',
+        ]);
+        for (const call of request.mock.calls) {
+            const sent = call[0] as unknown as { method: string; data: string };
+            expect(sent.method).toBe('POST');
+            expect(sent.data).toContain('params=');
+            expect(sent.data).toContain('encSecKey=');
+        }
+        // No backend is configured, so the backend fetch is never touched.
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty page for an empty playlist (lx10)', async () => {
+        const request = nativeRequest({
+            'music.163.com/weapi/v6/playlist/detail': JSON.stringify({
+                code: 200, playlist: { id: 1, name: 'Empty', trackCount: 0, trackIds: [] },
+            }),
+        });
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getPlaylistTracks(1, 50, 0);
+        expect(res.songs).toEqual([]);
+        // No ids, so the song/detail step is never asked for.
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://music.163.com/weapi/v6/playlist/detail',
+        }));
+    });
+
+    it('hands a refusing detail answer back (lx10)', async () => {
+        const request = nativeRequest({
+            'music.163.com/weapi/v6/playlist/detail': JSON.stringify({ code: 403, msg: 'no such playlist' }),
+        });
+        vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
+        const { neteaseApi } = await import('@/services/onlineMusic/netease/netease');
+
+        const res = await neteaseApi.getPlaylistTracks(1, 50, 0);
+        expect(res.code).toBe(403);
+        // The refusal is the detail's own verdict: the song/detail step is not asked for,
+        // and the provider's refusal check throws the right error from this answer.
+        expect(request).toHaveBeenCalledTimes(1);
+    });
 });

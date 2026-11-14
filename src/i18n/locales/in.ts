@@ -2082,9 +2082,6 @@ export default {
     "communityDiscord": "Server Discord",
     "communityDiscordHint": "Buka tautan undangan",
     "joinDiscord": "Gabung ke komunitas Discord",
-    "communityQq": "Grup bantuan mandiri QQ",
-    "communityQqHint": "{{number}} · klik untuk menyalin",
-    "qqGroupNumberCopied": "Nomor grup disalin",
     "releaseNotes": "Yang baru",
     "releaseNotesDescription": "Lihat perubahan pada versi ini",
     "majorUpdateLabel": "{{codename}} Update · Pembaruan besar",
@@ -2614,6 +2611,7 @@ export default {
     "appUpdateLatest": "Sudah versi terbaru",
     "appUpdateAvailable": "Versi baru {{version}} tersedia",
     "appUpdateDownload": "Unduh",
+    "appUpdatePreparingDownload": "Menyiapkan unduhan…",
     "appUpdateDismiss": "Tutup pemberitahuan pembaruan",
     "appUpdateCheckFailed": "Pemeriksaan gagal, coba lagi nanti",
     "updateUnsupported": "Tidak tersedia",
@@ -6806,5 +6804,10 @@ export default {
         "select": "Seret kotak di tempat kosong untuk memilih kartu di dalamnya; {{mod}}-klik sebuah kartu untuk menambah atau menguranginya. Sebuah panel mengambang di samping kartu yang dipilih: tambahkan ke antrean, tambahkan ke daftar putar, keluarkan, batalkan pilihan. Bila pilihan berasal dari sumber berbeda, tambahkan ke daftar putar menjadi abu-abu."
       }
     }
+  },
+  "goliaWelcome": {
+    "title": "Selamat datang di Golia",
+    "line1": "Golia — pemutar khusus oleh 酸甜贤",
+    "line2": "Ikuti akun resmi WeChat: 玻璃映海"
   }
 } as const;
