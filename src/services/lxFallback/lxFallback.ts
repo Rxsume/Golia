@@ -7,7 +7,10 @@
 // full one. A 'tx' song's songmid is resolved first, from the song itself or,
 // failing that, from a detail lookup, because one backend answers a numeric id
 // with another song's URL; the scripts receive the songmid in the musicInfo and
-// are expected to send it for tx (huibq is patched to do so).
+// are expected to send it for tx (huibq is patched to do so). A Qishui song has
+// no songmid of its own, so it first resolves to its tx equivalent by exact
+// title and artist (findTxEquivalent) and only then enters the 'tx' race; its
+// own id is never sent to a backend as a songmid.
 
 import type { SongResult } from '../../types';
 import type { PlaybackSourceRef } from '../../types/onlineMusic';
@@ -20,10 +23,13 @@ import { buildLxMusicInfo, getLxRuntime, LX_SCRIPTS, type LxScriptId, type LxSou
 // The provider id each LX source code stands for. This is the one place that names a
 // platform: the fallback is explicitly cross-provider, and the mapping is its core.
 // (Counts are pinned in test/unit/onlineMusic/platformNamePlaces.ts.)
+// Qishui has no LX source of its own: it enters the 'tx' race only as its tx
+// equivalent (see resolveLxSongIdentity), never under its own id.
 const LX_SOURCE_BY_PROVIDER_ID: Record<string, LxSource | undefined> = {
     netease: 'wy',
     qq: 'tx',
     kugou: 'kg',
+    qishui: 'tx',
 };
 
 /** The audio quality the hook asks the scripts for. */
@@ -75,19 +81,55 @@ export const numericSongIdFromRef = (song: SongResult, ref: PlaybackSourceRef): 
     return null;
 };
 
-export const resolveLxSongIdentity = async (song: SongResult): Promise<LxSongIdentity | null> => {
+/** How long the tx-equivalent search may hold up a Qishui preview before the trial plays. */
+const TX_EQUIVALENT_TIMEOUT_MS = 5000;
+/** How many candidates the equivalent search reads before it stops. */
+const TX_EQUIVALENT_LIMIT = 10;
+
+const normalizeSongText = (value: string): string => value.toLowerCase().replace(/\s+/g, '');
+
+/**
+ * Whether a candidate is the same song: the same title and at least one
+ * artist in common. The title alone is not enough — '瞬' is sung by other
+ * singers too — and the artist alone is not either. Titles
+ * compare exactly (past case and spacing): a trailing version note such as
+ * '(Live)' or '(Speed up版)' is a different recording, not the same song,
+ * so it must not match the bare title.
+ */
+export const isTxEquivalent = (candidate: SongResult, song: SongResult): boolean => {
+    if (normalizeSongText(candidate.name || '') !== normalizeSongText(song.name || '')) return false;
+    const wanted = new Set(song.artists.map(artist => normalizeSongText(artist.name)));
+    return candidate.artists.some(artist => wanted.has(normalizeSongText(artist.name)));
+};
+
+/**
+ * The tx song a Qishui song is, by exact title and artist, or null when there is
+ * no such song. The search goes through omni like any other provider search, so
+ * a signed-in account searches with its session and an anonymous one searches
+ * musicu direct; a refusal or a slow search is "no equivalent", never an error.
+ */
+export const findTxEquivalent = async (song: SongResult): Promise<SongResult | null> => {
+    const name = song.name.trim();
+    if (!name) return null;
+    const firstArtist = song.artists[0]?.name?.trim() ?? '';
+    const query = [name, firstArtist].filter(part => part.length > 0).join(' ');
+    const search = omni.searchProviderSongs('qq', query, { limit: TX_EQUIVALENT_LIMIT, offset: 0 })
+        .catch((error: unknown) => {
+            console.warn('[lxFallback] tx equivalent search failed', error);
+            return null;
+        });
+    const page = await Promise.race([
+        search,
+        new Promise<null>(resolve => setTimeout(() => resolve(null), TX_EQUIVALENT_TIMEOUT_MS)),
+    ]);
+    if (!page) return null;
+    return page.items.find(candidate => isTxEquivalent(candidate, song)) ?? null;
+};
+
+/** The 'tx' identity of the equivalent song: its songmid, from the song itself or a detail lookup. */
+export const resolveTxIdentity = async (song: SongResult, name: string, artists: string): Promise<LxSongIdentity | null> => {
     const ref = getPlaybackSourceRef(song);
     if (ref.kind !== 'online') return null;
-    const source = LX_SOURCE_BY_PROVIDER_ID[ref.providerId];
-    if (!source) return null;
-    const name = song.name || '';
-    const artists = song.artists.map(artist => artist.name).join(' / ');
-    if (source === 'wy') return { source, songId: String(song.id), name, artists };
-    if (source === 'kg') {
-        const hash = song.kgHash || ref.mediaId || String(song.id);
-        return { source, songId: String(song.id), hash, name, artists };
-    }
-    // 'tx': resolve the songmid before the backends see the song.
     let { songMid, mediaMid } = songMidFromRef(ref);
     if (!songMid) {
         const numericId = numericSongIdFromRef(song, ref);
@@ -104,7 +146,30 @@ export const resolveLxSongIdentity = async (song: SongResult): Promise<LxSongIde
         songMid = found.songMid;
         mediaMid = found.mediaMid || mediaMid;
     }
-    return { source, songId: String(song.id), songMid, mediaMid, name, artists };
+    return { source: 'tx', songId: String(song.id), songMid, mediaMid, name, artists };
+};
+
+export const resolveLxSongIdentity = async (song: SongResult): Promise<LxSongIdentity | null> => {
+    const ref = getPlaybackSourceRef(song);
+    if (ref.kind !== 'online') return null;
+    const source = LX_SOURCE_BY_PROVIDER_ID[ref.providerId];
+    if (!source) return null;
+    const name = song.name || '';
+    const artists = song.artists.map(artist => artist.name).join(' / ');
+    if (source === 'wy') return { source, songId: String(song.id), name, artists };
+    if (source === 'kg') {
+        const hash = song.kgHash || ref.mediaId || String(song.id);
+        return { source, songId: String(song.id), hash, name, artists };
+    }
+    // 'tx': a Qishui song is not a tx song — its id would reach a backend as a
+    // songmid and come back as another song's URL — so it first resolves to its
+    // tx equivalent, and only that equivalent enters the race.
+    if (ref.providerId === 'qishui') {
+        const equivalent = await findTxEquivalent(song);
+        if (!equivalent) return null;
+        return resolveTxIdentity(equivalent, name, artists);
+    }
+    return resolveTxIdentity(song, name, artists);
 };
 
 /** The first non-null result of the attempts, or null once they have all settled. */

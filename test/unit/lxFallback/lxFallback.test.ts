@@ -4,16 +4,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { omni } from '@/services/onlineMusic/omni';
 import {
-    firstLxSuccess, numericSongIdFromRef, resolveLxSongIdentity, songMidFromRef,
+    findTxEquivalent, firstLxSuccess, isTxEquivalent, numericSongIdFromRef, resolveLxSongIdentity, songMidFromRef,
 } from '@/services/lxFallback/lxFallback';
 import type { UnifiedSong } from '@/types';
 import type { PlaybackSourceRef } from '@/types/onlineMusic';
 
 vi.mock('@/services/onlineMusic/omni', () => ({
-    omni: { getSongDetail: vi.fn() },
+    omni: { getSongDetail: vi.fn(), searchProviderSongs: vi.fn() },
 }));
 
 const mockedGetSongDetail = vi.mocked(omni.getSongDetail);
+const mockedSearchProviderSongs = vi.mocked(omni.searchProviderSongs);
 
 // omni.getSongDetail resolves a UnifiedSong (sourceRef required), so the
 // helper builds one; callers override the fields they care about.
@@ -140,6 +141,117 @@ describe('resolveLxSongIdentity', () => {
         expect(await resolveLxSongIdentity(song({
             sourceRef: { kind: 'local', mediaId: 'x' },
         }))).toBeNull();
+    });
+});
+
+describe('isTxEquivalent', () => {
+    const qishui = song({
+        id: '7676337516358617115', name: '瞬',
+        artists: [{ id: 1, name: '郑润泽' }],
+        sourceRef: { kind: 'online', providerId: 'qishui', mediaId: '7676337516358617115' },
+    });
+    const qq = (overrides: Partial<UnifiedSong> = {}): UnifiedSong => song({
+        id: 422061155, name: '瞬',
+        artists: [{ id: 1, name: '郑润泽' }],
+        sourceRef: {
+            kind: 'online', providerId: 'qq', mediaId: '0040SY053uSb7r',
+            providerData: { songMid: '0040SY053uSb7r', songId: 422061155 },
+        },
+        ...overrides,
+    });
+
+    it('matches the same title and artist', () => {
+        expect(isTxEquivalent(qq(), qishui)).toBe(true);
+    });
+
+    it('rejects a versioned recording of the same title by the same singer', () => {
+        expect(isTxEquivalent(qq({ name: '瞬 (Live)' }), qishui)).toBe(false);
+    });
+
+    it('rejects the same title by another singer', () => {
+        expect(isTxEquivalent(qq({ artists: [{ id: 2, name: '小萧' }] }), qishui)).toBe(false);
+    });
+
+    it('rejects another title by the same singer', () => {
+        expect(isTxEquivalent(qq({ name: '瞬 (回头再望你Speed up版)', artists: [{ id: 1, name: '郑润泽' }] }), qishui)).toBe(false);
+    });
+});
+
+describe('resolveLxSongIdentity for qishui', () => {
+    const qishui = song({
+        id: '7676337516358617115', name: '瞬',
+        artists: [{ id: 1, name: '郑润泽' }],
+        sourceRef: { kind: 'online', providerId: 'qishui', mediaId: '7676337516358617115' },
+    });
+    const qqMatch = song({
+        id: 422061155, name: '瞬',
+        artists: [{ id: 1, name: '郑润泽' }],
+        sourceRef: {
+            kind: 'online', providerId: 'qq', mediaId: '0040SY053uSb7r',
+            providerData: { songMid: '0040SY053uSb7r', mediaMid: '0006oypR46bcLX', songId: 422061155 },
+        },
+    });
+
+    beforeEach(() => {
+        mockedGetSongDetail.mockReset();
+        mockedSearchProviderSongs.mockReset();
+    });
+
+    it('resolves a qishui song to its QQ equivalent and races as tx', async () => {
+        mockedSearchProviderSongs.mockResolvedValue({ items: [qqMatch], hasMore: false, nextOffset: 0 });
+        const identity = await resolveLxSongIdentity(qishui);
+        expect(mockedSearchProviderSongs).toHaveBeenCalledWith('qq', '瞬 郑润泽', { limit: 10, offset: 0 });
+        expect(identity).toMatchObject({ source: 'tx', songId: '422061155', songMid: '0040SY053uSb7r', mediaMid: '0006oypR46bcLX' });
+        expect(mockedGetSongDetail).not.toHaveBeenCalled();
+    });
+
+    it('finds the equivalent past other singers with the same title', async () => {
+        const otherSinger = song({
+            id: 530448471, name: '瞬',
+            artists: [{ id: 2, name: '小萧' }],
+            sourceRef: {
+                kind: 'online', providerId: 'qq', mediaId: '003a083F469PYj',
+                providerData: { songMid: '003a083F469PYj', songId: 530448471 },
+            },
+        });
+        mockedSearchProviderSongs.mockResolvedValue({ items: [otherSinger, qqMatch], hasMore: false, nextOffset: 0 });
+        const identity = await resolveLxSongIdentity(qishui);
+        expect(identity).toMatchObject({ songMid: '0040SY053uSb7r' });
+    });
+
+    it('looks the songmid up when the equivalent carries only a numeric id', async () => {
+        const numericMatch = song({
+            id: 422061155, name: '瞬',
+            artists: [{ id: 1, name: '郑润泽' }],
+            sourceRef: {
+                kind: 'online', providerId: 'qq', mediaId: '422061155',
+                providerData: { songId: 422061155 },
+            },
+        });
+        mockedSearchProviderSongs.mockResolvedValue({ items: [numericMatch], hasMore: false, nextOffset: 0 });
+        mockedGetSongDetail.mockResolvedValue(qqMatch);
+        const identity = await resolveLxSongIdentity(qishui);
+        expect(mockedGetSongDetail).toHaveBeenCalledWith('qq', 422061155);
+        expect(identity).toMatchObject({ source: 'tx', songMid: '0040SY053uSb7r' });
+    });
+
+    it('returns null when QQ has no song with that title and artist', async () => {
+        mockedSearchProviderSongs.mockResolvedValue({ items: [], hasMore: false, nextOffset: 0 });
+        expect(await resolveLxSongIdentity(qishui)).toBeNull();
+        expect(await findTxEquivalent(qishui)).toBeNull();
+        expect(mockedGetSongDetail).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the QQ search fails', async () => {
+        mockedSearchProviderSongs.mockRejectedValue(new Error('search refused'));
+        expect(await resolveLxSongIdentity(qishui)).toBeNull();
+    });
+
+    it('never sends the qishui id as a songmid', async () => {
+        mockedSearchProviderSongs.mockResolvedValue({ items: [qqMatch], hasMore: false, nextOffset: 0 });
+        const identity = await resolveLxSongIdentity(qishui);
+        expect(identity?.songMid).not.toBe('7676337516358617115');
+        expect(identity?.songId).not.toBe('7676337516358617115');
     });
 });
 

@@ -5,7 +5,7 @@
 // of this instance (as in the package); the confirmed session is kept by the
 // session store the caller supplies.
 
-import { createQishuiGuard, QISHUI_APP_IDENTITY_MD5, QISHUI_CLIENT_KEY, QISHUI_PREFIX, qishuiParams, qishuiText, readQishuiGuard, qishuiCredentialExpiry } from './protocol';
+import { createQishuiGuard, isAccountId, QISHUI_APP_IDENTITY_MD5, QISHUI_CLIENT_KEY, QISHUI_PREFIX, qishuiParams, qishuiText, readQishuiGuard, qishuiCredentialExpiry } from './protocol';
 import type { QishuiDirectClient, QishuiDirectSession, QishuiDirectUser } from './client';
 import { QishuiDirectError } from './client';
 
@@ -79,11 +79,11 @@ export const createQishuiDirectAuth = (
     const step = async <T>(stage: QishuiLoginStage, run: () => Promise<T>): Promise<T> => {
         try { return await run(); } catch (error) {
             if (error instanceof QishuiDirectError) {
-                error.stage = stage;
+                error.stage ||= stage;
                 throw error;
             }
             const failure = new QishuiDirectError('invalid-response', 'Qishui sign-in response could not be read', undefined, { cause: error });
-            failure.stage = stage;
+            failure.stage ||= stage;
             throw failure;
         }
     };
@@ -96,7 +96,7 @@ export const createQishuiDirectAuth = (
 
     const getUser = (credential: Omit<QishuiDirectSession, 'userId' | 'user'>): Promise<QishuiDirectUser> => step('account', async () => {
         const { my_info: user } = await client.platform('/me/info/', {}, credential) as { my_info?: Record<string, unknown> };
-        if (!user || typeof user.id !== 'string' || !user.id) {
+        if (!user || !isAccountId(user.id)) {
             throw new QishuiDirectError('invalid-response', 'Qishui did not identify the account');
         }
         return {

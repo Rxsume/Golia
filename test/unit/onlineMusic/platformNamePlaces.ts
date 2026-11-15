@@ -80,7 +80,7 @@ export const PLATFORM_NAME_PLACES: Record<string, PlatformNamePlace> = {
     'src/services/coverCache.ts': { n: { kugou: 1 }, kind: 'stored', why: 'a URL host' },
     'src/services/localLibraryV8Migration.ts': { n: { netease: 3, qq: 1, kugou: 1 }, kind: 'stored', why: 'a migration of stored values' },
     'src/services/localMusicService.ts': { n: { netease: 7 }, kind: 'lyric', why: 'a local song\'s lyric match searches one source and stores its id' },
-    'src/services/lxFallback/lxFallback.ts': { n: { netease: 1, qq: 1, kugou: 1 }, kind: 'question', why: 'the LX fallback maps a song\'s provider id to its LX source code' },
+    'src/services/lxFallback/lxFallback.ts': { n: { netease: 1, qq: 2, kugou: 1, qishui: 7 }, kind: 'question', why: 'the LX fallback maps a song\'s provider id to its LX source code; qishui enters the tx race only as its QQ equivalent, resolved by exact title and artist (lx22)' },
     'src/services/lxFallback/scripts/fish-music-v1.9.0.js': { n: { qq: 1 }, kind: 'stored', why: 'a third-party LX script, byte-identical and never edited: the source names it sends and shows' },
     'src/services/lxFallback/scripts/helloworld.js': { n: { netease: 1, qq: 2, kugou: 1 }, kind: 'stored', why: 'a third-party LX script, byte-identical and never edited: the source names it sends and shows' },
     'src/services/lxFallback/scripts/huibq-v1.2.0.js': { n: { netease: 1, kugou: 1 }, kind: 'doc', why: 'a third-party LX script, patched once (sends the songmid for tx, rejects the backend no-link stub): the counts are only the patch comment\'s platform names' },

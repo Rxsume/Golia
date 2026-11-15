@@ -7,6 +7,10 @@
 // no Electron bridge. The MD5 of the app id is a constant, so it is written out
 // instead of hashing at runtime (WebCrypto has no MD5).
 
+// The error lives in its own module so this file can throw it without importing
+// the client (which imports this file: that would be a cycle).
+import { QishuiDirectError } from './errors';
+
 export const QISHUI_UA = 'LunaOpenSDK/1.0.10';
 export const QISHUI_PREFIX = '/api/luna/v1/platform';
 export const QISHUI_CLIENT_KEY = 'aw4bbxfujo741d09';
@@ -165,7 +169,18 @@ export const qishuiGuardHeaders = async (
             throw new Error('invalid guard credential');
         }
     }
-    const key = await importGuardKey(credential.guardKey);
+    // A stored guard key that is not a usable P-256 PKCS#8 key (a valid string
+    // the store accepts, but not a key) used to throw the raw DOMException from
+    // the import on every account request, and renew() only signs out on
+    // 'auth-required' with an upstream code — so the session never self-cleared.
+    // It is an unusable credential, not a transient failure: report it as one,
+    // with a marker code so renew() can tell it from a bare HTTP 401/403.
+    let key: CryptoKey;
+    try {
+        key = await importGuardKey(credential.guardKey);
+    } catch (error) {
+        throw new QishuiDirectError('auth-required', 'Qishui guard credential cannot be used', 'invalid-guard-key', { cause: error });
+    }
     const timestamp = Math.floor(Date.now() / 1000);
     const content = `ticket=${credential.ticket}&path=${QISHUI_PREFIX}${path}&timestamp=${timestamp}`;
     const rawSignature = new Uint8Array(await crypto.subtle.sign(

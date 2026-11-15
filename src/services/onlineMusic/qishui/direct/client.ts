@@ -8,23 +8,10 @@
 
 import { hasNativeHttp, requestNativeHttp } from '../../capacitorHttp';
 import { QISHUI_PREFIX, QISHUI_UA, qishuiGuardHeaders, qishuiParams } from './protocol';
+import { QishuiDirectError } from './errors';
 import type { QishuiGuardCredential } from './protocol';
 
-// The API result copies only code, message, upstreamCode and stage; fetch
-// exceptions may embed credential-bearing URLs and never cross the boundary.
-export class QishuiDirectError extends Error {
-    /** The sign-in step that failed (access-code, ticket, account), where known. */
-    public stage?: 'access-code' | 'ticket' | 'account';
-
-    constructor(
-        public readonly code: 'unsupported' | 'invalid-response' | 'auth-required' | 'unavailable' | 'network' | 'not-playable',
-        message: string,
-        public readonly upstreamCode?: string,
-        options?: { cause?: unknown },
-    ) {
-        super(message, options);
-    }
-}
+export { QishuiDirectError } from './errors';
 
 const AUTH_CODES = [28001003, 28001007, 28001008, 10007];
 // Only known reads may be replayed. Account commands and future platform endpoints
