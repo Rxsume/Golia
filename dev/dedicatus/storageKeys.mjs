@@ -82,6 +82,8 @@ export const STORAGE_KEYS = [
     'provider:netease:anonymous_cookie',
     'provider:netease:cookie',
     'provider:netease:device',
+    'provider:qishui:device',
+    'provider:qishui:session',
     'provider:qq:cookie',
     'provider:qq:session-backend',
     'web:active_online_provider_id',

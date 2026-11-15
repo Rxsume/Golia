@@ -1,12 +1,13 @@
 import { OnlineProviderError } from '../../../types/onlineMusic';
 import type { OnlineFailureDetail, OnlineFailureOperation } from '../../../types/onlineMusic';
-import { QISHUI_BRIDGE_FAILED, QISHUI_NEEDS_DESKTOP, QishuiRequestError } from './qishuiTransport';
+import { QISHUI_BRIDGE_FAILED, QISHUI_NOT_AVAILABLE, QishuiRequestError } from './qishuiTransport';
 
 // src/services/onlineMusic/qishui/qishuiFailure.ts
 // What a Qishui request for a song's audio or a collection's tracks that failed hands to the shared
 // rules (services/onlineMusic/failure/). What the package's errors mean is said here only: the bridge
 // hands its code, sentence and upstream code through as they are (qishui-music-api/src/api.cjs), and
-// the sentences are the package's own (src/client.cjs, src/playback.cjs).
+// the sentences are the package's own (src/client.cjs, src/playback.cjs). The direct renderer API
+// returns the same codes and sentences, so the two paths read alike here.
 
 // The package's own sentences (qishui-music-api@0.2.1):
 // src/playback.cjs: the service gave only encrypted audio, which Folia does not decrypt.
@@ -16,8 +17,9 @@ const SIGNED_OUT = 'Sign in to Qishui first';
 
 export const describeQishuiFailure = (_operation: OnlineFailureOperation, error: unknown): OnlineFailureDetail | null => {
     if (!(error instanceof OnlineProviderError) || error.providerId !== 'qishui') return null;
-    // This page has no desktop bridge (the web build): Qishui cannot be used here at all.
-    if (error.message === QISHUI_NEEDS_DESKTOP) return { case: 'not-configured' };
+    // This page has neither the desktop bridge nor the shell's native HTTP plugin (the plain web build):
+    // Qishui cannot be used here at all.
+    if (error.message === QISHUI_NOT_AVAILABLE) return { case: 'not-configured' };
     // The bridge itself failed (the main process threw): the local side, not the network.
     if (error.message === QISHUI_BRIDGE_FAILED) return { case: 'local-service-stopped' };
     // Nobody is signed in: say "sign in to play", not "the sign-in ran out".
