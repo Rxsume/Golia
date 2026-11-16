@@ -5,8 +5,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyOmniAudioHook, installOmniResultHooks } from '@/services/hostExtensionHooks';
 import { installLxFallbackHook } from '@/services/lxFallback/lxFallback';
+import { omni } from '@/services/onlineMusic/omni';
 import type { UnifiedSong } from '@/types';
 import type { ProviderAudioSource } from '@/types/onlineMusic';
+
+vi.mock('@/services/onlineMusic/omni', () => ({
+    omni: { getSongDetail: vi.fn(), searchProviderSongs: vi.fn() },
+}));
+
+const mockedSearchProviderSongs = vi.mocked(omni.searchProviderSongs);
 
 // The three scripts all resolve through this one stubbed runtime.
 const { resolveMusicUrl } = vi.hoisted(() => ({
@@ -42,6 +49,7 @@ describe('LX hook on a preview (trial) source', () => {
         installOmniResultHooks(null);
         resolveMusicUrl.mockReset();
         resolveMusicUrl.mockResolvedValue('https://m801.music.126.net/full.mp3');
+        mockedSearchProviderSongs.mockReset();
     });
 
     it('replaces a trial clip with a full LX URL', async () => {
@@ -93,6 +101,59 @@ describe('LX hook on a preview (trial) source', () => {
         const result = await applyOmniAudioHook(song(), null);
         expect(result?.url).toBe('https://m801.music.126.net/full.mp3');
         expect(result?.preview).toBe(false);
+    });
+
+    it('races a qishui preview through its QQ equivalent', async () => {
+        const qishuiSong: UnifiedSong = {
+            id: '7676337516358617115', name: '瞬',
+            artists: [{ id: 1, name: '郑润泽' }],
+            album: { id: '1', name: 'Album' },
+            durationMs: 200000,
+            sourceRef: { kind: 'online', providerId: 'qishui', mediaId: '7676337516358617115' },
+        };
+        mockedSearchProviderSongs.mockResolvedValue({
+            items: [{
+                id: 422061155, name: '瞬',
+                artists: [{ id: 1, name: '郑润泽' }],
+                album: { id: '1', name: 'Album' },
+                durationMs: 200000,
+                sourceRef: {
+                    kind: 'online', providerId: 'qq', mediaId: '0040SY053uSb7r',
+                    providerData: { songMid: '0040SY053uSb7r', songId: 422061155 },
+                },
+            }],
+            hasMore: false,
+            nextOffset: 0,
+        });
+        installLxFallbackHook();
+        const preview: ProviderAudioSource = {
+            url: 'https://v26.douyinvod.com/trial.mp3',
+            fetchedAt: Date.now(), quality: 'standard', preview: true,
+        };
+        const result = await applyOmniAudioHook(qishuiSong, preview);
+        expect(mockedSearchProviderSongs).toHaveBeenCalledWith('qq', '瞬 郑润泽', { limit: 10, offset: 0 });
+        expect(resolveMusicUrl).toHaveBeenCalled();
+        expect(result?.url).toBe('https://m801.music.126.net/full.mp3');
+        expect(result?.preview).toBe(false);
+    });
+
+    it('keeps a qishui preview when QQ has no equivalent', async () => {
+        const qishuiSong: UnifiedSong = {
+            id: '7676337516358617115', name: '瞬',
+            artists: [{ id: 1, name: '郑润泽' }],
+            album: { id: '1', name: 'Album' },
+            durationMs: 200000,
+            sourceRef: { kind: 'online', providerId: 'qishui', mediaId: '7676337516358617115' },
+        };
+        mockedSearchProviderSongs.mockResolvedValue({ items: [], hasMore: false, nextOffset: 0 });
+        installLxFallbackHook();
+        const preview: ProviderAudioSource = {
+            url: 'https://v26.douyinvod.com/trial.mp3',
+            fetchedAt: Date.now(), quality: 'standard', preview: true,
+        };
+        const result = await applyOmniAudioHook(qishuiSong, preview);
+        expect(result).toBe(preview);
+        expect(resolveMusicUrl).not.toHaveBeenCalled();
     });
 
     it('logs when a song the fallback should cover has no identity', async () => {

@@ -18,6 +18,7 @@ import { describeQishuiFailure } from './qishuiFailure';
 function clearAccountState() { clearQishuiExplore(); clearQishuiRecommendations(); clearQishuiPlayback(); }
 export const qishuiProvider: OnlineMusicProvider = {
     id: 'qishui', displayName: '汽水音乐', shortName: '汽水', shortNameKey: 'onlineProviderName.qishui', mark: { letter: '汽', color: '#19a58c' },
+    aggregatedSearch: true,
     getAvailability: getQishuiAvailability,
     capabilities: { search: true, playback: true, lyrics: true, wordByWordLyrics: true, auth: true,
         userLibrary: true, playlists: true, albums: false, artists: true, recommendations: true,

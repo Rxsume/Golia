@@ -59,6 +59,10 @@ export const CREDENTIAL_WRITERS = {
         // 扫码轮询确认（803）的分支
         checkLogin: ['cookie'],
     },
+    'src/services/onlineMusic/qishui/direct/sessionStore.ts': {
+        // Direct API 的会话仓库：确认的扫码登录或同一会话的续期写，退出登录清
+        persistQishuiSession: ['session'],
+    },
     'electron/kugou/kugouApiBridge.cjs': {
         // 确认的扫码登录（login_qr_check、status 4），整对写入
         adoptConfirmedSignIn: ['token', 'userid'],
