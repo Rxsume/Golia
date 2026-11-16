@@ -1426,7 +1426,11 @@ export default function App() {
         }
     }, [audioRef, seekDuringTransition]);
 
-    const transportCommandRefs = useTransportCommandRefs({ resumePlayback, pausePlayback, handlePrevTrack, handleNextTrack, seekTo });
+    // The transport's pause is async; the command refs only ever call it and drop the
+    // result, so hand them a void-returning wrapper instead of a floating promise.
+    const pausePlaybackVoid = useCallback(() => { void pausePlayback(); }, [pausePlayback]);
+
+    const transportCommandRefs = useTransportCommandRefs({ resumePlayback, pausePlayback: pausePlaybackVoid, handlePrevTrack, handleNextTrack, seekTo });
     const {
         mediaSessionPlayRef,
         mediaSessionPauseRef,

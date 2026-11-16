@@ -50,7 +50,7 @@ type RecoveryControllerParams = {
     // The classified reason the last address refresh for that source failed, so a second
     // recovery for the same file can say why instead of a bare failure. Cleared when a
     // refresh starts or the source plays; set wherever the task resolves with a failure.
-    lastAudioRecoveryFailureRef: MutableRefObject<OnlineFailure | undefined>;
+    lastAudioRecoveryFailureRef: RefObject<OnlineFailure | undefined>;
     currentOnlineAudioUrlFetchedAtRef: MutableRefObject<number | null>;
     persistLastPlaybackCache: (song: SongResult | null, queue: SongResult[]) => Promise<void>;
     onlineAudioUrlTtlMs: number;
