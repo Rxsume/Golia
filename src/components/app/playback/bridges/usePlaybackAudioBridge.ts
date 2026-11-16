@@ -241,6 +241,9 @@ export function usePlaybackAudioBridge({
     // is seen again keeps lock-screen Play audible after unlocking. Only while
     // playback is wanted, as above.
     useEffect(() => {
+        // The bridge also renders in a node test environment with no DOM: nothing
+        // to listen on there, and the context resume below needs the page anyway.
+        if (typeof document === 'undefined' || typeof window === 'undefined') return;
         const resumeIfWanted = () => {
             const ctx = audioContextRef.current;
             if (!ctx || document.visibilityState === 'hidden') return;

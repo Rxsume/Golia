@@ -280,8 +280,11 @@ describe('a preview clip and the media cache', () => {
         expect(await savedBytes()).toBe('https://m1.music.126.net/a-high.mp3');
     });
 
-    // The URL the prefetch pass holds is played without asking the provider again: the mark has to
-    // come with it.
+    // A prefetched preview is played after asking the provider once more at play time,
+    // so the LX fallback gets its shot at the whole song (a cold backend loses the race
+    // at prefetch time); the mark still comes with the URL that is returned. That is
+    // one ask at prefetch plus one at play time. A full prefetched URL still plays
+    // without asking again.
     it('keeps the mark on the URL the prefetch pass holds', async () => {
         clearPrefetchRuntime();
         previewOnly = true;
@@ -290,7 +293,7 @@ describe('a preview clip and the media cache', () => {
         expect(prefetched?.audioUrl).toBe('https://m1.music.126.net/a-high.mp3');
 
         expect(await load(prefetched)).toMatchObject({ audioSrc: prefetched!.audioUrl, preview: true });
-        expect(asked).toBe(1);
+        expect(asked).toBe(2);
     });
 
     // A copy stored by a version that kept clips: under half the song, it is deleted with its
