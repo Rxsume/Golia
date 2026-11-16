@@ -29,7 +29,9 @@ export type UseMediaSessionBridgeOptions = {
     currentSong: SongResult | null;
     cachedCoverUrl: string | null;
     playerState: PlayerState;
-    isNowPlayingStageActive: boolean;
+    // Kept optional for useHifiMpris, which Picks it to stop its own clock while the stage
+    // is active; this hook no longer reads it.
+    isNowPlayingStageActive?: boolean;
     unknownArtistLabel: string;
     mediaSessionPlayRef: RefObject<() => Promise<void>>;
     mediaSessionPauseRef: RefObject<() => void>;

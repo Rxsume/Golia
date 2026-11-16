@@ -114,7 +114,7 @@ export function useHifiMpris({
     currentSong,
     cachedCoverUrl,
     playerState,
-    isNowPlayingStageActive,
+    isNowPlayingStageActive = false,
     unknownArtistLabel,
     mediaSessionPlayRef,
     mediaSessionPauseRef,

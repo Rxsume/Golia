@@ -136,6 +136,23 @@ describe('online playback recovery bounds', () => {
         expect(loadAudioSourceMock).toHaveBeenCalledTimes(1);
     });
 
+    it('joins the in-flight recovery instead of tripping the per-file guard while it runs', async () => {
+        const firstUrl = streamUrl('one');
+        const { controller } = createController(firstUrl);
+        const load = pendingLoad();
+        loadAudioSourceMock.mockImplementation(() => load.promise);
+
+        const first = controller.recoverOnlinePlaybackSource({ failedSrc: firstUrl, autoplay: true });
+        // Same failed file, second call, while the first refresh is still running: the guard
+        // already matches (the attempt set the source ref at start and cleared the remembered
+        // failure), so without the in-flight check first this would answer a bare failure.
+        const second = controller.recoverOnlinePlaybackSource({ failedSrc: firstUrl, autoplay: true });
+        load.finish({ kind: 'ok', audioSrc: streamUrl('two') });
+        await expect(first).resolves.toEqual({ recovered: true });
+        await expect(second).resolves.toEqual({ recovered: true });
+        expect(loadAudioSourceMock).toHaveBeenCalledTimes(1);
+    });
+
     it('lets a forced (manual) retry bypass the per-file guard', async () => {
         const firstUrl = streamUrl('one');
         const { controller } = createController(firstUrl);

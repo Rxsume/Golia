@@ -136,20 +136,24 @@ export const createOnlineRecoveryController = ({
         }
 
         const normalizedFailedSrc = getOnlineRecoveryKey(failedSrc || audioElement.currentSrc || audioSrc || null);
-        if (!force && normalizedFailedSrc && lastAudioRecoverySourceRef.current === normalizedFailedSrc) {
-            // The guard still stops the refresh loop; only the reported reason changes. A
-            // second recovery for a file whose refresh already failed says why it failed
-            // (the classified failure from that attempt) instead of a bare failure that
-            // the transport can only show as a generic "playback error".
-            return { recovered: false, failure: lastAudioRecoveryFailureRef.current };
-        }
-
+        // The in-flight recovery is joined before the per-file guard: a second recovery
+        // arriving while the first is still running shares the pending task instead of
+        // tripping the guard, whose remembered failure only exists once an attempt
+        // has resolved (the ref is cleared when an attempt starts).
         const songKey = getPlaybackSongKey(song);
         const start = startOfAskedSong();
         const recoveryKey = `${songKey}#${start}`;
         const pendingRecovery = onlinePlaybackRecoveryRef.current.get(recoveryKey);
         if (pendingRecovery) {
             return pendingRecovery;
+        }
+
+        if (!force && normalizedFailedSrc && lastAudioRecoverySourceRef.current === normalizedFailedSrc) {
+            // The guard still stops the refresh loop; only the reported reason changes. A
+            // second recovery for a file whose refresh already failed says why it failed
+            // (the classified failure from that attempt) instead of a bare failure that
+            // the transport can only show as a generic "playback error".
+            return { recovered: false, failure: lastAudioRecoveryFailureRef.current };
         }
 
         const recoveryTask = (async (): Promise<OnlineRecovery> => {
