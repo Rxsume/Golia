@@ -21,7 +21,7 @@ import {
     getOnlineRecoveryKey,
     type OnlineRecovery,
 } from '@/components/app/playback/restore/createOnlineRecoveryController';
-import { onlineFailureOf } from '@/services/onlineMusic/failure/onlineFailureCase';
+import { onlineFailureOf, type OnlineFailure } from '@/services/onlineMusic/failure/onlineFailureCase';
 import { askForSong } from '@/components/app/playback/currentSong';
 import type { SongResult } from '@/types';
 
@@ -63,6 +63,7 @@ const createController = (audioSrc: string, {
     blobUrlRef?: { current: string | null };
 } = {}) => {
     const lastAudioRecoverySourceRef = ref<string | null>(null);
+    const lastAudioRecoveryFailureRef = ref<OnlineFailure | undefined>(undefined);
     const audioRef = ref<HTMLAudioElement | null>({ currentTime: 0, currentSrc: audioSrc } as HTMLAudioElement);
     const shouldAutoPlayRef = ref(false);
     const pendingResumeTimeRef = ref<number | null>(null);
@@ -80,6 +81,7 @@ const createController = (audioSrc: string, {
         pendingResumeTimeRef,
         onlinePlaybackRecoveryRef: recoveryRef,
         lastAudioRecoverySourceRef,
+        lastAudioRecoveryFailureRef,
         currentOnlineAudioUrlFetchedAtRef: ref<number | null>(null),
         persistLastPlaybackCache,
         onlineAudioUrlTtlMs: 60_000,
@@ -87,7 +89,7 @@ const createController = (audioSrc: string, {
     });
 
     return {
-        controller, lastAudioRecoverySourceRef, shouldAutoPlayRef, recoveryRef,
+        controller, lastAudioRecoverySourceRef, lastAudioRecoveryFailureRef, shouldAutoPlayRef, recoveryRef,
         blobUrlRef, pendingResumeTimeRef, persistLastPlaybackCache,
     };
 };
@@ -366,6 +368,8 @@ describe('online playback recovery results', () => {
     });
 
     // The media error alone says only that the file did not play; the address asked for anew says why.
+    // A second recovery for the same file asks for nothing new, but the reason the first
+    // attempt already learned is handed on with it, so the toast can name the cause.
     it('hands on why a new address could not be had, and nothing where none was asked for', async () => {
         const firstUrl = streamUrl('one');
         const { controller } = createController(firstUrl);
@@ -375,6 +379,7 @@ describe('online playback recovery results', () => {
         await expect(controller.recoverOnlinePlaybackSource({ failedSrc: firstUrl, autoplay: true }))
             .resolves.toEqual({ recovered: false, failure });
         await expect(controller.recoverOnlinePlaybackSource({ failedSrc: streamUrl('two'), autoplay: true }))
-            .resolves.toEqual({ recovered: false });
+            .resolves.toEqual({ recovered: false, failure });
+        expect(loadAudioSourceMock).toHaveBeenCalledTimes(1);
     });
 });

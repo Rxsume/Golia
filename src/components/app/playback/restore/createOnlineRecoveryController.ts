@@ -47,6 +47,10 @@ type RecoveryControllerParams = {
     // start never answers for another, also when the same song was started again.
     onlinePlaybackRecoveryRef: MutableRefObject<Map<string, Promise<OnlineRecovery>>>;
     lastAudioRecoverySourceRef: MutableRefObject<string | null>;
+    // The classified reason the last address refresh for that source failed, so a second
+    // recovery for the same file can say why instead of a bare failure. Cleared when a
+    // refresh starts or the source plays; set wherever the task resolves with a failure.
+    lastAudioRecoveryFailureRef: MutableRefObject<OnlineFailure | undefined>;
     currentOnlineAudioUrlFetchedAtRef: MutableRefObject<number | null>;
     persistLastPlaybackCache: (song: SongResult | null, queue: SongResult[]) => Promise<void>;
     onlineAudioUrlTtlMs: number;
@@ -91,6 +95,7 @@ export const createOnlineRecoveryController = ({
     pendingResumeTimeRef,
     onlinePlaybackRecoveryRef,
     lastAudioRecoverySourceRef,
+    lastAudioRecoveryFailureRef,
     currentOnlineAudioUrlFetchedAtRef,
     persistLastPlaybackCache,
     onlineAudioUrlTtlMs,
@@ -132,7 +137,11 @@ export const createOnlineRecoveryController = ({
 
         const normalizedFailedSrc = getOnlineRecoveryKey(failedSrc || audioElement.currentSrc || audioSrc || null);
         if (!force && normalizedFailedSrc && lastAudioRecoverySourceRef.current === normalizedFailedSrc) {
-            return { recovered: false };
+            // The guard still stops the refresh loop; only the reported reason changes. A
+            // second recovery for a file whose refresh already failed says why it failed
+            // (the classified failure from that attempt) instead of a bare failure that
+            // the transport can only show as a generic "playback error".
+            return { recovered: false, failure: lastAudioRecoveryFailureRef.current };
         }
 
         const songKey = getPlaybackSongKey(song);
@@ -147,6 +156,9 @@ export const createOnlineRecoveryController = ({
             if (normalizedFailedSrc) {
                 lastAudioRecoverySourceRef.current = normalizedFailedSrc;
             }
+            // A fresh attempt owns the remembered reason: a success or a stale answer
+            // leaves nothing to report for this file.
+            lastAudioRecoveryFailureRef.current = undefined;
 
             try {
                 const audioResult = await loadOnlineSongAudio(song, audioQuality, null, { bypassMediaCache });
@@ -158,6 +170,7 @@ export const createOnlineRecoveryController = ({
                 }
 
                 if (audioResult.kind === 'unavailable') {
+                    lastAudioRecoveryFailureRef.current = audioResult.failure;
                     return { recovered: false, failure: audioResult.failure };
                 }
 
@@ -199,7 +212,9 @@ export const createOnlineRecoveryController = ({
             } catch (error) {
                 console.error('[App] Failed to recover online playback source', error);
                 const providerId = getOnlineProviderIdForSong(song) ?? undefined;
-                return { recovered: false, failure: onlineFailureOf({ operation: 'audio', providerId }, { error }) };
+                const failure = onlineFailureOf({ operation: 'audio', providerId }, { error });
+                lastAudioRecoveryFailureRef.current = failure;
+                return { recovered: false, failure };
             } finally {
                 onlinePlaybackRecoveryRef.current.delete(recoveryKey);
             }

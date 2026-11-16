@@ -113,7 +113,18 @@ export async function loadOnlineSongAudioSource(
     const fromCopy = await playCopy(await readCopy(level));
     if (fromCopy) return fromCopy;
 
-    if (prefetched?.audioUrl && prefetched.audioUrl !== 'CACHED_IN_DB' && isUrlValid(prefetched.audioUrlFetchedAt)) {
+    // A prefetched preview clip is not taken as the answer: the LX fallback never got its
+    // shot when the prefetch ran (a cold backend loses the race), and a preview pinned
+    // here plays for 20 minutes without ever retrying it. A full prefetched URL still
+    // plays at once; a preview is only the fallback when no full address can be had.
+    const prefetchedPreview = prefetched?.audioUrl
+        && prefetched.audioUrl !== 'CACHED_IN_DB'
+        && isUrlValid(prefetched.audioUrlFetchedAt)
+        && omni.isPreviewAudioSource(prefetched.audioUrl)
+        ? { kind: 'ok' as const, audioSrc: prefetched.audioUrl, replayGain: song.replayGain ?? prefetched.replayGain, preview: true as const }
+        : null;
+
+    if (prefetched?.audioUrl && prefetched.audioUrl !== 'CACHED_IN_DB' && isUrlValid(prefetched.audioUrlFetchedAt) && !prefetchedPreview) {
         return {
             kind: 'ok',
             audioSrc: prefetched.audioUrl,
@@ -125,7 +136,7 @@ export async function loadOnlineSongAudioSource(
     // No address: what went wrong is logged, also where a copy of another level then plays.
     const unavailable = async (failure: OnlineFailure, error?: unknown) => {
         logOnlineFailure(failure, error);
-        return await playCopyOfAnyLevel() ?? { kind: 'unavailable' as const, failure };
+        return await playCopyOfAnyLevel() ?? prefetchedPreview ?? { kind: 'unavailable' as const, failure };
     };
     const sleep = options.retry?.sleep ?? sleepBeforeRetry;
     for (let attempt = 0; ; attempt += 1) {

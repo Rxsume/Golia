@@ -8,9 +8,11 @@ import { usePlaybackStore } from '../../../../stores/usePlaybackStore';
 import { omni } from '../../../../services/onlineMusic/omni';
 import { currentTime } from '../../../../stores/motionSignals';
 import { markProgrammaticPause, playbackFade, type PlaybackFadeSettleReason } from '../../../../services/playbackFade';
-import { getPlaybackSongKey } from '../../../../utils/appPlaybackGuards';
+import { applyPlaybackAudioSession, shouldResumeAudioContext } from '../../../../utils/audioSession';
+import { getOnlineProviderIdForSong, getPlaybackSongKey } from '../../../../utils/appPlaybackGuards';
 import type { OnlineRecovery, OnlineRecoveryOptions } from '../restore/createOnlineRecoveryController';
 import type { OnlineFailure } from '../../../../services/onlineMusic/failure/onlineFailureCase';
+import { mediaFailureOf } from '../../../../services/onlineMusic/failure/onlineFailureCase';
 import { onlineFailureToast } from '../source/onlineFailureToast';
 import { hifiTransport, isHifiRoute } from '../../../../services/hifi/hifiPlayback';
 import { resumeHifiPlayback } from '../../../hifi/hifiRouteTransport';
@@ -149,6 +151,10 @@ export function usePlaybackTransportController({
         const shouldAutoplay = () => wantsPlayback.current && isSameSource();
 
         setupAudioAnalyzer();
+        // Re-claim the playback session on every resume, inside the user gesture: a lock
+        // or an interruption drops it, and the once-only set in the graph setup does not
+        // come back. On iOS 16.0–16.3 this is a silent no-op (no navigator.audioSession).
+        applyPlaybackAudioSession();
         // An interruption suspends the context, and awaiting its resume before play() strands the
         // resume: the session belongs to the other app until our element plays, so a resume that
         // waits on the session can hang forever while play() — the call that takes the session
@@ -156,7 +162,7 @@ export function usePlaybackTransportController({
         // treated as autoplay and refused. Start the resume without awaiting it, press play
         // first, and make sure the context is running once the element is sounding.
         let contextResume: Promise<void> | null = null;
-        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        if (audioContextRef.current && shouldResumeAudioContext(audioContextRef.current.state, true)) {
             contextResume = audioContextRef.current.resume().catch(() => {});
         }
         if (!isCurrent()) return;
@@ -205,7 +211,7 @@ export function usePlaybackTransportController({
             // silently — warned, not silent, so the failure is diagnosable.
             if (contextResume) {
                 await contextResume;
-                if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+                if (audioContextRef.current && shouldResumeAudioContext(audioContextRef.current.state, true)) {
                     await audioContextRef.current.resume().catch(() => {});
                 }
                 if (audioContextRef.current && audioContextRef.current.state !== 'running') {
@@ -241,10 +247,15 @@ export function usePlaybackTransportController({
 
             // An online song whose address was asked for again and refused says why; so does one whose
             // address ran out and could not be had again, where the old one failed to play too. A toast
-            // that stays (a countdown to the next song) is not covered by this one.
-            const shown = recovery.failure ?? refreshFailure;
-            const said = shown ? onlineFailureToast(shown, t) : { type: 'error' as const, text: t('status.playbackError') };
-            setStatusMsg(prev => (prev?.persistent ? prev : said));
+            // that stays (a countdown to the next song) is not covered by this one. Where no
+            // recovery was asked for at all (a local song, or the song already gone), the media
+            // element's own error is the last resort, so the toast always names a cause
+            // instead of falling back to a bare "playback error".
+            const shown = recovery.failure ?? refreshFailure ?? mediaFailureOf(
+                audio.error,
+                getOnlineProviderIdForSong(usePlaybackStore.getState().currentSong) ?? undefined,
+            );
+            setStatusMsg(prev => (prev?.persistent ? prev : onlineFailureToast(shown, t)));
             setPlayerState(PlayerState.PAUSED);
             throw error;
         }

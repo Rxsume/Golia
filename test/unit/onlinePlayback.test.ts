@@ -10,6 +10,7 @@ const prefersOwnWordByWordMock = vi.hoisted(() => vi.fn(() => false));
 const loadLyricsStateMock = vi.hoisted(() => vi.fn());
 const saveLyricsStateMock = vi.hoisted(() => vi.fn());
 const isUrlValidMock = vi.hoisted(() => vi.fn(() => true));
+const isPreviewAudioSourceMock = vi.hoisted(() => vi.fn((url: string) => url.includes('/preview/')));
 const updatePrefetchedAudioUrlMock = vi.hoisted(() => vi.fn());
 const lyricSettings = vi.hoisted(() => ({
     autoUseBestLyric: true,
@@ -29,7 +30,7 @@ vi.mock('@/services/onlineMusic/omni', () => ({
         getLyrics: lyricsMock,
         getAlternateArtistName: otherArtistNameMock,
         resolveAudioQuality: (_providerId: string, preference: string) => preference,
-        isPreviewAudioSource: () => false,
+        isPreviewAudioSource: isPreviewAudioSourceMock,
         prefersOwnWordByWordLyrics: prefersOwnWordByWordMock,
     },
 }));
@@ -181,6 +182,45 @@ describe('online audio ReplayGain plumbing', () => {
             replayGain: { trackGain: -3.2 },
         });
         expect(sourceMock).not.toHaveBeenCalled();
+    });
+
+    it('does not pin a prefetched preview: it asks the provider again so the LX fallback gets its shot', async () => {
+        const prefetched = {
+            audioUrl: 'https://audio.test/preview/clip.mp3',
+            audioUrlFetchedAt: Date.now(),
+            replayGain: { trackGain: -3.2 },
+        } as any;
+        sourceMock.mockResolvedValue({
+            url: 'https://audio.test/full.flac',
+            fetchedAt: 1,
+            quality: 'high',
+        });
+
+        const result = await loadOnlineSongAudioSource(song, 'high', prefetched);
+
+        expect(sourceMock).toHaveBeenCalled();
+        expect(result).toMatchObject({ kind: 'ok', audioSrc: 'https://audio.test/full.flac' });
+    });
+
+    it('falls back to a prefetched preview when no full address can be had', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const prefetched = {
+            audioUrl: 'https://audio.test/preview/clip.mp3',
+            audioUrlFetchedAt: Date.now(),
+            replayGain: { trackGain: -3.2 },
+        } as any;
+        sourceMock.mockRejectedValueOnce(new OnlineProviderError('network', 'offline', 'kugou'));
+
+        const result = await loadOnlineSongAudioSource(song, 'high', prefetched);
+
+        expect(sourceMock).toHaveBeenCalled();
+        expect(result).toMatchObject({
+            kind: 'ok',
+            audioSrc: 'https://audio.test/preview/clip.mp3',
+            replayGain: { trackGain: -3.2 },
+            preview: true,
+        });
+        warn.mockRestore();
     });
 
     it('leaves ReplayGain absent when the provider has no metadata', async () => {

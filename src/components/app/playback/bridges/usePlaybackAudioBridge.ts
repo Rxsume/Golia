@@ -23,6 +23,7 @@ import { setPlayerState, setReplayGainAppliedDb, setReplayGainEstimated } from '
 import { useTranslation } from 'react-i18next';
 import { usePlaybackStore } from '../../../../stores/usePlaybackStore';
 import { resolveHeardAudioEqualizerSettings } from '../../../../utils/audioEqualizerModCurve';
+import { applyPlaybackAudioSession, shouldResumeAudioContext } from '../../../../utils/audioSession';
 
 // src/components/app/playback/bridges/usePlaybackAudioBridge.ts
 
@@ -179,10 +180,7 @@ export function usePlaybackAudioBridge({
         // not let this run twice, because createMediaElementSource throws on a second call.
         if (!audioRef.current || audioContextRef.current) return;
         try {
-            try {
-                const nav = navigator as Navigator & { audioSession?: { type: string } };
-                if (nav.audioSession) nav.audioSession.type = 'playback';
-            } catch { /* audioSession unsupported */ }
+            applyPlaybackAudioSession();
             const AudioContextClass = window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
             const ctx = new AudioContextClass();
             void applySavedAudioOutputToContext(ctx, useAudioSettingsStore.getState().audioOutputDeviceId);
@@ -214,6 +212,18 @@ export function usePlaybackAudioBridge({
             // the fade/analyser dead forever, because the guard above never let setup retry).
             // applyReplayGain below reads the ref, so this must land before it.
             audioContextRef.current = ctx;
+            // iOS interrupts the context on lock/backgrounding and reports 'interrupted',
+            // not 'suspended'; without a listener the element keeps playing into a dead
+            // graph and lock-screen Play cannot revive it. A resume while interrupted
+            // fails (the session belongs to the other app) and is swallowed; when the
+            // interruption ends the state moves to 'suspended', the event fires again,
+            // and the resume lands. Only while playback is wanted: a pause pressed
+            // while locked must stand.
+            ctx.addEventListener('statechange', () => {
+                if (shouldResumeAudioContext(ctx.state, usePlaybackStore.getState().playerState === PlayerState.PLAYING)) {
+                    void ctx.resume().catch(() => {});
+                }
+            });
             applyReplayGain();
             syncOutputGain(getTargetPlaybackVolume(), 0);
             // A fresh context starts suspended off a gesture; wake it now so the fade ramp and
@@ -225,6 +235,26 @@ export function usePlaybackAudioBridge({
             audioContextRef.current = null;
         }
     }, [analyserRef, applyReplayGain, audioContextRef, audioRef, connectDecks, gainNodeRef, getTargetPlaybackVolume, heardEqualizerSettings, syncOutputGain]);
+
+    // A lock ends the interruption without a statechange the graph can act on (the
+    // context may sit 'suspended' while the page is hidden); waking it when the page
+    // is seen again keeps lock-screen Play audible after unlocking. Only while
+    // playback is wanted, as above.
+    useEffect(() => {
+        const resumeIfWanted = () => {
+            const ctx = audioContextRef.current;
+            if (!ctx || document.visibilityState === 'hidden') return;
+            if (shouldResumeAudioContext(ctx.state, usePlaybackStore.getState().playerState === PlayerState.PLAYING)) {
+                void ctx.resume().catch(() => {});
+            }
+        };
+        document.addEventListener('visibilitychange', resumeIfWanted);
+        window.addEventListener('pageshow', resumeIfWanted);
+        return () => {
+            document.removeEventListener('visibilitychange', resumeIfWanted);
+            window.removeEventListener('pageshow', resumeIfWanted);
+        };
+    }, [audioContextRef]);
 
     /**
      * Writes a fully-played track's audio and cover into the media cache.

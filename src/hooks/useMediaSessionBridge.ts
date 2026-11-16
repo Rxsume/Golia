@@ -35,6 +35,7 @@ export type UseMediaSessionBridgeOptions = {
     mediaSessionPauseRef: RefObject<() => void>;
     mediaSessionPrevRef: RefObject<() => void>;
     mediaSessionNextRef: RefObject<() => Promise<void> | void>;
+    mediaSessionSeekRef?: RefObject<(timeSec: number) => void>;
     isNowPlayingControlDisabledRef: RefObject<boolean>;
 };
 
@@ -45,12 +46,12 @@ export const useMediaSessionBridge = ({
     currentSong,
     cachedCoverUrl,
     playerState,
-    isNowPlayingStageActive,
     unknownArtistLabel,
     mediaSessionPlayRef,
     mediaSessionPauseRef,
     mediaSessionPrevRef,
     mediaSessionNextRef,
+    mediaSessionSeekRef,
     isNowPlayingControlDisabledRef,
 }: UseMediaSessionBridgeOptions) => {
     // On the HiFi route mpv sounds the song: the position comes off the HiFi media shim, and its
@@ -105,14 +106,25 @@ export const useMediaSessionBridge = ({
             }
             void mediaSessionNextRef.current();
         });
+        setActionHandlerSafely('seekto', (details) => {
+            if (isNowPlayingControlDisabledRef.current || !audioRef.current || !mediaSessionSeekRef) {
+                return;
+            }
+            const seekTime = details.seekTime;
+            if (typeof seekTime !== 'number' || !Number.isFinite(seekTime)) {
+                return;
+            }
+            mediaSessionSeekRef.current(Math.max(0, seekTime));
+        });
 
         return () => {
             setActionHandlerSafely('play', null);
             setActionHandlerSafely('pause', null);
             setActionHandlerSafely('previoustrack', null);
             setActionHandlerSafely('nexttrack', null);
+            setActionHandlerSafely('seekto', null);
         };
-    }, [audioRef, isNowPlayingControlDisabledRef, mediaSessionNextRef, mediaSessionPauseRef, mediaSessionPlayRef, mediaSessionPrevRef]);
+    }, [audioRef, isNowPlayingControlDisabledRef, mediaSessionNextRef, mediaSessionPauseRef, mediaSessionPlayRef, mediaSessionPrevRef, mediaSessionSeekRef]);
 
     useEffect(() => {
         if (!('mediaSession' in navigator)) {
@@ -208,13 +220,14 @@ export const useMediaSessionBridge = ({
         }
 
         try {
-            navigator.mediaSession.playbackState = isNowPlayingStageActive
-                ? 'none'
-                : currentSong
-                    ? (playerState === PlayerState.PLAYING ? 'playing' : 'paused')
-                    : 'none';
+            // 'none' only when there is genuinely no song: forcing it while the Now
+            // Playing stage is active blanked the lock-screen card by the app's own
+            // hand, so locking from the player page showed nothing to control.
+            navigator.mediaSession.playbackState = currentSong
+                ? (playerState === PlayerState.PLAYING ? 'playing' : 'paused')
+                : 'none';
         } catch (e) {
             console.warn('[MediaSession] Failed to update playback state', e);
         }
-    }, [currentSong, isNowPlayingStageActive, playerState]);
+    }, [currentSong, playerState]);
 };

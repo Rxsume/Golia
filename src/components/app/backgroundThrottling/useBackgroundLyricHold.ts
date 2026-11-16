@@ -17,7 +17,24 @@ export const useBackgroundLyricHold = () => {
     useEffect(() => {
         const electron = window.electron;
         if (!electron?.getBackgroundThrottlingState) {
-            return;
+            // No Electron bridge (the iOS Capacitor shell): hold the lyric animation
+            // whenever the document is hidden (app backgrounded or locked), so the
+            // visualizer pauses and stops burning GPU/CPU while audio keeps playing.
+            // The Electron path below also watches visibility, but only when its
+            // background-throttling switch is in force; on iOS there is no such
+            // switch, so visibility alone is the trigger.
+            const syncVisibility = () => {
+                const held = document.visibilityState === 'hidden';
+                if (useBackgroundLyricHoldStore.getState().held !== held) {
+                    useBackgroundLyricHoldStore.setState({ held });
+                }
+            };
+            syncVisibility();
+            document.addEventListener('visibilitychange', syncVisibility);
+            return () => {
+                document.removeEventListener('visibilitychange', syncVisibility);
+                useBackgroundLyricHoldStore.setState({ held: false });
+            };
         }
         let state: BackgroundThrottlingState = { active: false, hidden: false };
         let disposed = false;

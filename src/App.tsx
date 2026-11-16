@@ -393,6 +393,7 @@ export default function App() {
         pendingResumeTimeRef,
         onlinePlaybackRecoveryRef,
         lastAudioRecoverySourceRef,
+        lastAudioRecoveryFailureRef,
         currentOnlineAudioUrlFetchedAtRef,
     } = usePlaybackRuntimeRefs();
     // The automix decks are set up much further down, but a few reset paths declared above here
@@ -649,11 +650,12 @@ export default function App() {
         pendingResumeTimeRef,
         onlinePlaybackRecoveryRef,
         lastAudioRecoverySourceRef,
+        lastAudioRecoveryFailureRef,
         currentOnlineAudioUrlFetchedAtRef,
         persistLastPlaybackCache,
         onlineAudioUrlTtlMs: ONLINE_AUDIO_URL_TTL_MS,
         onlineAudioUrlRefreshBufferMs: ONLINE_AUDIO_URL_REFRESH_BUFFER_MS,
-    }), [audioQuality, audioSrc, audioRef, blobUrlRef, currentOnlineAudioUrlFetchedAtRef, currentSong, lastAudioRecoverySourceRef, onlinePlaybackRecoveryRef, pendingResumeTimeRef, persistLastPlaybackCache, setAudioSrc, setCurrentSong, setPlayQueue, shouldAutoPlay]);
+    }), [audioQuality, audioSrc, audioRef, blobUrlRef, currentOnlineAudioUrlFetchedAtRef, currentSong, lastAudioRecoveryFailureRef, lastAudioRecoverySourceRef, onlinePlaybackRecoveryRef, pendingResumeTimeRef, persistLastPlaybackCache, setAudioSrc, setCurrentSong, setPlayQueue, shouldAutoPlay]);
 
     const getCoverUrl = useMemo(
         () => createCoverUrlResolver(cachedCoverUrl, currentSong),
@@ -1415,12 +1417,22 @@ export default function App() {
         activeDeck: automix.activeDeck,
     });
 
-    const transportCommandRefs = useTransportCommandRefs({ resumePlayback, pausePlayback, handlePrevTrack, handleNextTrack });
+    // One seek for every entry point that can move the playhead (keyboard, lock screen):
+    // the provider's own player, then the HiFi route, then a blend in flight, else the deck.
+    const seekTo = useCallback((timeSec: number) => {
+        const time = Math.max(0, timeSec);
+        if (!seekExternalPlayback(time) && !seekHifiRoute(time) && !seekDuringTransition(time) && audioRef.current) {
+            audioRef.current.currentTime = time;
+        }
+    }, [audioRef, seekDuringTransition]);
+
+    const transportCommandRefs = useTransportCommandRefs({ resumePlayback, pausePlayback, handlePrevTrack, handleNextTrack, seekTo });
     const {
         mediaSessionPlayRef,
         mediaSessionPauseRef,
         mediaSessionPrevRef,
         mediaSessionNextRef,
+        mediaSessionSeekRef,
         taskbarHasTrackRef,
         taskbarPlayerStateRef,
     } = transportCommandRefs;
@@ -1444,6 +1456,7 @@ export default function App() {
         mediaSessionPauseRef,
         mediaSessionPrevRef,
         mediaSessionNextRef,
+        mediaSessionSeekRef,
         isNowPlayingControlDisabledRef,
     };
     useMediaSessionBridge(mediaSessionOptions);
@@ -2514,6 +2527,7 @@ export default function App() {
                 playbackAutoSkipCountRef.current = 0;
                 // The source plays, so a later TTL refresh of the same media is legitimate again.
                 lastAudioRecoverySourceRef.current = null;
+                lastAudioRecoveryFailureRef.current = undefined;
                 setPlayerState(PlayerState.PLAYING);
                 // A preview clip is told of as it is heard, once per start of the song.
                 notePreviewPlaying(e.currentTarget.currentSrc, t);

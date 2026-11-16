@@ -3,6 +3,7 @@ import type { SongResult } from '../../../types';
 import { usePlaybackStore } from '../../../stores/usePlaybackStore';
 import { askedSongKeyRef } from './currentSong';
 import type { OnlineRecovery } from './restore/createOnlineRecoveryController';
+import type { OnlineFailure } from '../../../services/onlineMusic/failure/onlineFailureCase';
 
 // src/components/app/playback/usePlaybackRuntimeRefs.ts
 //
@@ -42,6 +43,9 @@ export const usePlaybackRuntimeRefs = () => {
     // `startOfAskedSong`), so one for a start never answers for another (createOnlineRecoveryController.ts).
     const onlinePlaybackRecoveryRef = useRef<Map<string, Promise<OnlineRecovery>>>(new Map());
     const lastAudioRecoverySourceRef = useRef<string | null>(null);
+    // The classified reason the last refresh of that source failed; read by the recovery
+    // controller's per-file guard so a second recovery can say why (createOnlineRecoveryController.ts).
+    const lastAudioRecoveryFailureRef = useRef<OnlineFailure | undefined>(undefined);
     const currentOnlineAudioUrlFetchedAtRef = useRef<number | null>(null);
 
     const currentSong = usePlaybackStore(state => state.currentSong);
@@ -69,6 +73,7 @@ export const usePlaybackRuntimeRefs = () => {
         pendingResumeTimeRef,
         onlinePlaybackRecoveryRef,
         lastAudioRecoverySourceRef,
+        lastAudioRecoveryFailureRef,
         currentOnlineAudioUrlFetchedAtRef,
     }), []);
 };

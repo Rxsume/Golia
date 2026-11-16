@@ -155,11 +155,13 @@ describe('transport failure reasons', () => {
         await act(async () => { await expect(host.actions().resumePlayback()).rejects.toBe(playError); });
         expect(useStatusMessageStore.getState().message).toMatchObject({ type: 'error', text: 'failure.unreachable', note: 'failure.noteCheckNetwork' });
     });
-    it('keeps the generic message when no failure reason is known', async () => {
+    it('names the media error when no recovery failure is known', async () => {
         const playError = new Error('MEDIA_ELEMENT_ERROR: Format error');
         const host = mount({ audioPlay: Promise.reject(playError) });
         await act(async () => { await expect(host.actions().resumePlayback()).rejects.toBe(playError); });
-        expect(useStatusMessageStore.getState().message).toEqual({ type: 'error', text: 'status.playbackError' });
+        // No recovery was asked for, so there is no classified failure to hand on — but the
+        // media element's own error still names the cause instead of a bare "playback error".
+        expect(useStatusMessageStore.getState().message).toEqual({ type: 'error', text: 'failure.audioUnplayable', durationMs: 6000 });
         expect(usePlaybackStore.getState().playerState).toBe(PlayerState.PAUSED);
     });
     // A toast that stays (the countdown to the next song) is not covered by the transport's message.
