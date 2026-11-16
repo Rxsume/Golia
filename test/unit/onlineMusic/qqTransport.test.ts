@@ -77,6 +77,16 @@ describe('QQ Music Web transport', () => {
         expect(describeQqFailure('audio', error)).toEqual({ case: 'not-configured' });
     });
 
+    // 本地后端还没起来（NodeMobile 冷启动）时报 unavailable：和「后端没跑起来」同一句本地服务没起来，
+    // 不是「原因不明」。没这一句，歌单页会显示「加载失败 未知错误」。
+    it('marks a local backend that is not up yet as the local service being stopped', async () => {
+        const { describeQqFailure } = await import('@/services/onlineMusic/qq/qqFailure');
+        const { OnlineProviderError } = await import('@/types/onlineMusic');
+
+        const error = new OnlineProviderError('unavailable', 'QQ local backend is not reachable yet', 'qq');
+        expect(describeQqFailure('collection', error)).toEqual({ case: 'local-service-stopped' });
+    });
+
     // 500 正文只给 `{ error }`（后端 observability.js）：原文要交出去，否则诊断时只剩一个状态码。
     it('carries the backend error text of a 500 with the status', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => Response.json(

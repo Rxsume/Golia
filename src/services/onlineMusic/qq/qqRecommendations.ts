@@ -66,7 +66,77 @@ const getPersonalFm = async (options?: PersonalFmRequestOptions): Promise<Unifie
 };
 
 // 后端没有 refresh 参数，同一天拿到的是同一批，所以忽略「换一批」。
-const getDailySongs = (): Promise<UnifiedSong[]> => loadRecommendedSongs('user_daily_songs');
+const getDailySongsWorker = (): Promise<UnifiedSong[]> => loadRecommendedSongs('user_daily_songs');
+
+// 每日 30 首的匿名兜底（Worker 那路用不了时）：新歌（type 5）优先、新歌榜（topId 27，当天日期）备用。
+// 都是 musicu 直连、匿名可读（2026-11-16 直连实测：新歌 47 首、新歌榜 30 首，都有 mid 与歌手）。
+// 取 30 首，与每日 30 首的量一致。任一路由没给歌或被拒时回 []，由调用方试下一条。
+const DAILY_SONGS_ANONYMOUS_LIMIT = 30;
+
+const dailySongsFromNewSongs = async (): Promise<UnifiedSong[]> => {
+    const answer = await requestQqMusicu({
+        newsong: {
+            module: 'newsong.NewSongServer',
+            method: 'get_new_song_info',
+            param: { type: 5 },
+        },
+    });
+    const list = answer.newsong;
+    if (list.code !== 0) return [];
+    const songs = asRecord(list.data)?.songlist;
+    if (!Array.isArray(songs)) return [];
+    return songs.map(normalizeQqSong).filter((song: UnifiedSong) => Boolean(song.qqMid)).slice(0, DAILY_SONGS_ANONYMOUS_LIMIT);
+};
+
+const dailySongsFromToplist = async (): Promise<UnifiedSong[]> => {
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const answer = await requestQqMusicu({
+        toplist: {
+            module: 'musicToplist.ToplistInfoServer',
+            method: 'GetDetail',
+            param: { topId: 27, offset: 0, num: DAILY_SONGS_ANONYMOUS_LIMIT, period },
+        },
+    });
+    const list = answer.toplist;
+    if (list.code !== 0) return [];
+    const songs = asRecord(list.data)?.songInfoList;
+    if (!Array.isArray(songs)) return [];
+    return songs.map(normalizeQqSong).filter((song: UnifiedSong) => Boolean(song.qqMid)).slice(0, DAILY_SONGS_ANONYMOUS_LIMIT);
+};
+
+// 匿名兜底：新歌优先、新歌榜备用；两条都没给歌时回 []。
+const loadDailySongsAnonymously = async (): Promise<UnifiedSong[]> => {
+    try {
+        const songs = await dailySongsFromNewSongs();
+        if (songs.length > 0) return songs;
+    } catch (error) {
+        console.warn('[QQProvider] daily-songs-new-songs:failed', error);
+    }
+    try {
+        const songs = await dailySongsFromToplist();
+        if (songs.length > 0) return songs;
+    } catch (error) {
+        console.warn('[QQProvider] daily-songs-toplist:failed', error);
+    }
+    return [];
+};
+
+/**
+ * 每日 30 首：有会话先走 Worker；Worker 真失败时（不是没数据）走匿名兜底，兜底也没歌时把 Worker 原来的错交出去。
+ * 没会话时直接走匿名兜底，兜底失败回 []。Worker 和匿名不并行：匿名是 Worker 失败后的退路，不是备选。
+ */
+const getDailySongs = async (): Promise<UnifiedSong[]> => {
+    if (!hasUsableQqSession()) return loadDailySongsAnonymously();
+    try {
+        return await getDailySongsWorker();
+    } catch (error) {
+        if (isEmptyAnswer(error)) return [];
+        const anonymous = await loadDailySongsAnonymously();
+        if (anonymous.length > 0) return anonymous;
+        throw error;
+    }
+};
 
 /** 每日 30 首有历史的日期（`YYYY-MM-DD`），照后端的顺序；可能不连续，不在这里补日子。 */
 const getHistoryDates = async (): Promise<string[]> => {

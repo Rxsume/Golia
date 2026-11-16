@@ -48,6 +48,9 @@ export const describeQqFailure = (_operation: OnlineFailureOperation, error: unk
     if (!(error instanceof OnlineProviderError) || error.providerId !== 'qq') return null;
     // 登录窗口叫它 local-service-unavailable（登录窗口重启不了它）；在别处两种本地服务说的是同一句。
     if (error.message.startsWith(QQ_API_NOT_RUNNING)) return { case: 'local-service-stopped' };
+    // 本地后端还没起来（NodeMobile 冷启动）时，会话是本地发的请求也报 unavailable：和上面同一句本地服务没起来，
+    // 不是「原因不明」。没这一句，歌单页会显示「加载失败 未知错误」。
+    if (error.message === 'QQ local backend is not reachable yet') return { case: 'local-service-stopped' };
     if (error.message === QQ_API_BASE_MISSING) return { case: 'not-configured' };
     // 后端答了，没给链接（qqProvider.ts）：它透出来的「可能」的原因在 cause 上。
     if (error.code === 'not-playable') {

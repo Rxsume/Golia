@@ -53,11 +53,52 @@ describe('QQ recommendations', () => {
             expect(songs.map(item => [item.qqMid, item.id])).toEqual([['mid-a', 101], ['mid-b', 102]]);
         });
 
-        // 这几条都要登录：没有会话就不发请求，一个 401 只会把空会话再清一遍。
-        it('asks nothing without a session', async () => {
+        // 没会话时直接走匿名兜底：新歌优先，Worker 不发请求（一个 401 只会把空会话再清一遍）。
+        it('uses the anonymous new songs without a session', async () => {
             transportState.hasSession = false;
+            requestMusicuMock.mockResolvedValueOnce({
+                newsong: { code: 0, data: { songlist: [song('mid-a', 101), song('mid-b', 102)] } },
+            });
+
+            const songs = await qqRecommendations.getDailySongs!();
+
+            expect(requestMock).not.toHaveBeenCalled();
+            expect(requestMusicuMock).toHaveBeenCalledWith({
+                newsong: { module: 'newsong.NewSongServer', method: 'get_new_song_info', param: { type: 5 } },
+            });
+            expect(songs.map(item => [item.qqMid, item.id])).toEqual([['mid-a', 101], ['mid-b', 102]]);
+        });
+
+        it('falls back to the new-songs toplist without a session when the new songs fail', async () => {
+            transportState.hasSession = false;
+            const now = new Date();
+            const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            requestMusicuMock
+                .mockRejectedValueOnce(new OnlineProviderError('network', 'QQ musicu unreachable', 'qq'))
+                .mockResolvedValueOnce({
+                    toplist: { code: 0, data: { songInfoList: [song('mid-c', 103)] } },
+                });
+
+            const songs = await qqRecommendations.getDailySongs!();
+
+            expect(requestMock).not.toHaveBeenCalled();
+            expect(requestMusicuMock).toHaveBeenCalledWith({
+                toplist: {
+                    module: 'musicToplist.ToplistInfoServer',
+                    method: 'GetDetail',
+                    param: { topId: 27, offset: 0, num: 30, period },
+                },
+            });
+            expect(songs.map(item => item.qqMid)).toEqual(['mid-c']);
+        });
+
+        it('returns no songs without a session when both anonymous routes fail', async () => {
+            transportState.hasSession = false;
+            requestMusicuMock.mockRejectedValue(new OnlineProviderError('network', 'QQ musicu unreachable', 'qq'));
+
             await expect(qqRecommendations.getDailySongs!()).resolves.toEqual([]);
             expect(requestMock).not.toHaveBeenCalled();
+            expect(requestMusicuMock).toHaveBeenCalledTimes(2);
         });
 
         it('treats 422 (no data) and a backend without the route as an empty day', async () => {
@@ -68,7 +109,42 @@ describe('QQ recommendations', () => {
 
         it('surfaces a real failure so the daily view can say so', async () => {
             requestMock.mockRejectedValueOnce(upstreamFailure());
+            requestMusicuMock.mockRejectedValue(new OnlineProviderError('network', 'QQ musicu unreachable', 'qq'));
             await expect(qqRecommendations.getDailySongs!()).rejects.toMatchObject({ httpStatus: 502 });
+        });
+
+        it('falls back to the anonymous new songs when the Worker fails', async () => {
+            requestMock.mockRejectedValueOnce(upstreamFailure());
+            requestMusicuMock.mockResolvedValueOnce({
+                newsong: { code: 0, data: { songlist: [song('mid-a', 101)] } },
+            });
+
+            const songs = await qqRecommendations.getDailySongs!();
+
+            expect(songs.map(item => item.qqMid)).toEqual(['mid-a']);
+            expect(requestMusicuMock).toHaveBeenCalledTimes(1);
+        });
+
+        it('falls back to the toplist when the Worker and the new songs fail', async () => {
+            requestMock.mockRejectedValueOnce(upstreamFailure());
+            requestMusicuMock
+                .mockRejectedValueOnce(new OnlineProviderError('network', 'QQ musicu unreachable', 'qq'))
+                .mockResolvedValueOnce({
+                    toplist: { code: 0, data: { songInfoList: [song('mid-c', 103)] } },
+                });
+
+            const songs = await qqRecommendations.getDailySongs!();
+
+            expect(songs.map(item => item.qqMid)).toEqual(['mid-c']);
+            expect(requestMusicuMock).toHaveBeenCalledTimes(2);
+        });
+
+        it('throws the original Worker error when the Worker and both anonymous routes fail', async () => {
+            requestMock.mockRejectedValueOnce(upstreamFailure());
+            requestMusicuMock.mockRejectedValue(new OnlineProviderError('network', 'QQ musicu unreachable', 'qq'));
+
+            await expect(qqRecommendations.getDailySongs!()).rejects.toMatchObject({ httpStatus: 502 });
+            expect(requestMusicuMock).toHaveBeenCalledTimes(2);
         });
     });
 
