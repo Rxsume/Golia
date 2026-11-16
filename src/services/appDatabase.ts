@@ -98,12 +98,19 @@ export class AppDatabase extends Dexie {
     });
 
     this.on('versionchange', event => {
+      // The connection must close so the upgrade in the other context can
+      // proceed; the event lets the UI say a restart is wanted. The page is
+      // NOT reloaded here: a versionchange can arrive while a song is
+      // playing (a second connection opening the database, the worker
+      // interleaving with a busy write window), and an unconditional reload
+      // then restarts the app mid-playback — the "playing 2–3s, then the app
+      // reopens" report. The new schema is picked up on the next launch;
+      // nothing here needs the fresh connection right away.
       this.close();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(APP_DATABASE_VERSION_CHANGE_EVENT, {
           detail: { oldVersion: event.oldVersion, newVersion: event.newVersion },
         }));
-        window.setTimeout(() => window.location.reload(), 0);
       }
     });
   }
