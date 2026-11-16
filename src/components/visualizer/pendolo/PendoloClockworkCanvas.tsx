@@ -402,6 +402,14 @@ const PendoloClockworkCanvas: React.FC<PendoloClockworkCanvasProps> = ({
                 fxFrame.color = beatFx.color;
             }
 
+            // Paused: the motion above already froze the gears, so the frame is the one
+            // already on screen — drawing it again every frame is pure GPU work. The
+            // loop keeps ticking (cheap) so the first frame after unpausing draws at once.
+            if (p.paused) {
+                animationFrameId = window.requestAnimationFrame(render);
+                return;
+            }
+
             const width = box.width;
             const height = box.height;
             if (width <= 0 || height <= 0) {

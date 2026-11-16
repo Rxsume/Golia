@@ -2,6 +2,7 @@
 // Shared helpers and global RAF gate for optional visualizer frame throttling.
 
 import type { VisualizerFrameRate } from '../types';
+import { getIOSMajorVersion } from './iosVersion';
 
 type AnimationFrameCallback = FrameRequestCallback;
 type RequestAnimationFrameFn = (callback: AnimationFrameCallback) => number;
@@ -19,7 +20,7 @@ type WindowWithVisualizerFrameRateLimiter = Window & {
     __foliaNativeCancelAnimationFrame?: CancelAnimationFrameFn;
 };
 
-export const VISUALIZER_FRAME_RATE_OPTIONS = [60, 90, 120] as const satisfies VisualizerFrameRate[];
+export const VISUALIZER_FRAME_RATE_OPTIONS = [30, 60, 90, 120] as const satisfies VisualizerFrameRate[];
 export const VISUALIZER_FRAME_RATE_STORAGE_KEY = 'visualizer_frame_rate';
 const FRAME_INTERVAL_TOLERANCE_MS = 1;
 
@@ -28,6 +29,7 @@ export const isVisualizerFrameRate = (value: unknown): value is VisualizerFrameR
     || value === 120
     || value === 90
     || value === 60
+    || value === 30
 );
 
 export const parseVisualizerFrameRate = (value: string | null): VisualizerFrameRate => {
@@ -38,6 +40,18 @@ export const parseVisualizerFrameRate = (value: string | null): VisualizerFrameR
     const parsed = Number(value);
     return isVisualizerFrameRate(parsed) ? parsed : 'off';
 };
+
+// The frame rate to use when nothing is stored: 30 fps on iOS 16 and earlier, whose
+// weaker GPUs drop frames at the uncapped rate; otherwise off (uncapped). A stored
+// value — including an explicit 'off' — always wins over this default.
+export const defaultVisualizerFrameRate = (): VisualizerFrameRate => {
+    const iosVersion = getIOSMajorVersion();
+    return iosVersion !== null && iosVersion <= 16 ? 30 : 'off';
+};
+
+export const resolveVisualizerFrameRate = (stored: string | null): VisualizerFrameRate => (
+    stored === null ? defaultVisualizerFrameRate() : parseVisualizerFrameRate(stored)
+);
 
 // Decides whether a RAF tick should run under the configured FPS cap.
 export const shouldProcessFrameAtRate = (
@@ -190,7 +204,7 @@ export const installGlobalVisualizerFrameRateLimiter = (overrideFrameRate?: Visu
     }
 
     const initialFrameRate = overrideFrameRate
-        ?? parseVisualizerFrameRate(window.localStorage.getItem(VISUALIZER_FRAME_RATE_STORAGE_KEY));
+        ?? resolveVisualizerFrameRate(window.localStorage.getItem(VISUALIZER_FRAME_RATE_STORAGE_KEY));
     if (initialFrameRate === 'off') {
         restoreGlobalVisualizerFrameRateLimiter();
         return;

@@ -306,7 +306,13 @@ export function usePlaybackAudioBridge({
         const offProfile = onTrackProfile(() => applyReplayGain());
         const offRecord = onBalanceRecord(() => applyReplayGain());
         const offWrap = onPlayWrapped(() => applyReplayGain());
-        const timer = setInterval(() => applyReplayGain(), BALANCE_POLL_MS);
+        const timer = setInterval(() => {
+            // Backgrounded, the gain is a slow per-track value: no need to wake every
+            // 500 ms for it. The profile/record/wrap events above still apply it at
+            // once when something actually changes, and the poll resumes on return.
+            if (document.visibilityState === 'hidden') return;
+            applyReplayGain();
+        }, BALANCE_POLL_MS);
         return () => {
             offProfile();
             offRecord();

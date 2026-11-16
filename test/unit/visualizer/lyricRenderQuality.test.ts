@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readStoredLyricRenderQuality } from '@/stores/visualizerSettingsPersistence';
 import {
     DEFAULT_LYRIC_RENDER_QUALITY,
@@ -51,6 +51,23 @@ describe('lyric render quality', () => {
         // 默认密度本来就过了上限：不再加，但也不压下来。
         expect(resolveLyricPixelRatio(3.5, 2)).toBe(3.5);
         expect(resolveLyricPixelRatio(Number.NaN, 1)).toBe(1);
+    });
+
+    it('caps the base density at 2 on iOS 16 and earlier, so a 3x phone does not render 9x pixels', () => {
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1' });
+        try {
+            expect(resolveLyricPixelRatio(3, 1)).toBe(2);
+            expect(resolveLyricPixelRatio(3, 0.5)).toBe(1);
+            expect(resolveLyricPixelRatio(2, 1)).toBe(2);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' });
+        try {
+            expect(resolveLyricPixelRatio(3, 1)).toBe(3);
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
     it('keeps the style default when anti-aliasing is auto', () => {

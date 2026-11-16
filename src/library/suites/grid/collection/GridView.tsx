@@ -1819,7 +1819,7 @@ export const GridView: React.FC<GridViewProps> = ({
                                     : 'relative w-full aspect-square rounded-lg overflow-hidden bg-zinc-200/60 dark:bg-zinc-800/60 shadow-inner'}
                             >
                                 {standIn.coverUrl && (
-                                    <img src={standIn.coverUrl} alt="" draggable={false} decoding="sync" className="absolute inset-0 h-full w-full object-cover" />
+                                    <img src={standIn.coverUrl} alt="" draggable={false} decoding="async" className="absolute inset-0 h-full w-full object-cover" />
                                 )}
                             </div>
                             {fullBleedCover && <div className="absolute inset-0" style={{ backgroundImage: fullBleedScrim(isDaylight) }} />}

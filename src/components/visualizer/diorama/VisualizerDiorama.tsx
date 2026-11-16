@@ -174,6 +174,7 @@ const VisualizerDiorama: React.FC<VisualizerDioramaProps> = (props) => {
         seed,
         dioramaTuning,
         isPreviewMode = false,
+        paused = false,
     } = props;
     const { t } = useTranslation();
     // 分辨率与抗锯齿（#929）：全局挡位叠上这个样式的覆盖；预览（样式架小图等）保持原来的 dpr 与抗锯齿。
@@ -471,6 +472,10 @@ const VisualizerDiorama: React.FC<VisualizerDioramaProps> = (props) => {
                     camera={{ position: [0, 0.6, 9], fov: 55 }}
                     dpr={canvasDpr}
                     gl={{ alpha: true, antialias: canvasAntialias }}
+                    // Paused: stop the render loop entirely instead of redrawing the same
+                    // frozen scene every frame. Flipping back to 'always' restarts it, so
+                    // resume draws at once; the last frame stays on screen while paused.
+                    frameloop={paused ? 'never' : 'always'}
                     // The size it is laid out at, not the size on screen: drawn small through a CSS
                     // scale (the pickers' pictures) it keeps the scene of the full page.
                     resize={{ offsetSize: true }}

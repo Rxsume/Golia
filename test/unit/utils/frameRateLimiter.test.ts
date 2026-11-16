@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { cancelUncappedAnimationFrame, createFrameRateLimitedRaf, installGlobalVisualizerFrameRateLimiter, parseVisualizerFrameRate, requestUncappedAnimationFrame, setGlobalVisualizerFrameRate, shouldProcessFrameAtRate } from '../../../src/utils/frameRateLimiter';
+import { describe, expect, it, vi } from 'vitest';
+import { cancelUncappedAnimationFrame, createFrameRateLimitedRaf, defaultVisualizerFrameRate, installGlobalVisualizerFrameRateLimiter, parseVisualizerFrameRate, requestUncappedAnimationFrame, resolveVisualizerFrameRate, setGlobalVisualizerFrameRate, shouldProcessFrameAtRate } from '../../../src/utils/frameRateLimiter';
+import { getIOSMajorVersion } from '../../../src/utils/iosVersion';
 
 // test/unit/utils/frameRateLimiter.test.ts
 
@@ -11,9 +12,35 @@ describe('frameRateLimiter', () => {
         expect(parseVisualizerFrameRate('120')).toBe(120);
         expect(parseVisualizerFrameRate('90')).toBe(90);
         expect(parseVisualizerFrameRate('60')).toBe(60);
-        expect(parseVisualizerFrameRate('30')).toBe('off');
+        expect(parseVisualizerFrameRate('30')).toBe(30);
         expect(parseVisualizerFrameRate('15')).toBe('off');
         expect(parseVisualizerFrameRate('24')).toBe('off');
+    });
+
+    it('caps at 30 fps with a ~33 ms interval', () => {
+        expect(shouldProcessFrameAtRate(1000, 0, 30)).toBe(true);
+        expect(shouldProcessFrameAtRate(1031, 1000, 30)).toBe(false);
+        expect(shouldProcessFrameAtRate(1033, 1000, 30)).toBe(true);
+    });
+
+    it('defaults to 30 fps on iOS 16 and earlier, uncapped elsewhere', () => {
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1' });
+        expect(getIOSMajorVersion()).toBe(16);
+        expect(defaultVisualizerFrameRate()).toBe(30);
+        expect(resolveVisualizerFrameRate(null)).toBe(30);
+        // A stored value wins over the default, including an explicit 'off'.
+        expect(resolveVisualizerFrameRate('off')).toBe('off');
+        expect(resolveVisualizerFrameRate('60')).toBe(60);
+
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' });
+        expect(getIOSMajorVersion()).toBe(17);
+        expect(defaultVisualizerFrameRate()).toBe('off');
+        expect(resolveVisualizerFrameRate(null)).toBe('off');
+
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' });
+        expect(getIOSMajorVersion()).toBeNull();
+        expect(defaultVisualizerFrameRate()).toBe('off');
+        vi.unstubAllGlobals();
     });
 
     it('skips frames until the target interval has elapsed', () => {

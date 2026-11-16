@@ -59,7 +59,7 @@ export const ArtistPicture: React.FC<ArtistPictureProps> = ({ url, instant = fal
                     src={picture}
                     alt="avatar"
                     draggable={false}
-                    decoding="sync"
+                    decoding="async"
                     className="absolute inset-0 w-full h-full object-cover select-none"
                     {...(picture === coming ? {
                         onLoad: (event: React.SyntheticEvent<HTMLImageElement>) => comeIn(event.currentTarget, picture),

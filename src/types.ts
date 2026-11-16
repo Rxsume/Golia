@@ -143,7 +143,7 @@ export type ThemeMode = 'default' | 'ai' | 'custom';
 
 export type BuiltinVisualizerMode = 'classic' | 'cadenza' | 'partita' | 'fume' | 'monet';
 export type VisualizerMode = BuiltinVisualizerMode | (string & {});
-export type VisualizerFrameRate = 'off' | 120 | 90 | 60;
+export type VisualizerFrameRate = 'off' | 120 | 90 | 60 | 30;
 
 /**
  * 用 canvas / WebGL 画的歌词样式的渲染分辨率：相对样式自己默认像素密度（大多是屏幕的 devicePixelRatio，钳到 2）的倍数，

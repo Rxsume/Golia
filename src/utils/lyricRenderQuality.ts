@@ -1,4 +1,5 @@
 import type { LyricAntialias, LyricRenderOverride, LyricRenderQuality, LyricRenderScale } from '../types';
+import { getIOSMajorVersion } from './iosVersion';
 
 // src/utils/lyricRenderQuality.ts
 // 歌词画布的分辨率与抗锯齿（#929）：「动画与性能」里一个全局挡位，用 canvas / WebGL 画的歌词样式各自有一份覆盖，
@@ -47,12 +48,15 @@ export const resolveLyricRenderQuality = (global: LyricRenderQuality, override?:
 
 /**
  * 渲染倍率：样式自己的默认像素密度（base，各样式原来怎么算还怎么算）乘上分辨率倍数，最多 MAX_LYRIC_PIXEL_RATIO；
- * 默认密度本来就超过上限时不再往上加，但缩小照样生效。
+ * 默认密度本来就超过上限时不再往上加，但缩小照样生效。iOS 16 及以下：GPU 扛不住满 3 倍视网膜密度
+ * （iPhone 上 devicePixelRatio 3，9 倍于 1 倍屏的像素），歌词画布掉帧，所以底密度先钳到 2 倍。
  */
 export const resolveLyricPixelRatio = (base: number, scale: LyricRenderScale, max = MAX_LYRIC_PIXEL_RATIO) => {
     const safeBase = Number.isFinite(base) && base > 0 ? base : 1;
-    const ratio = safeBase * scale;
-    return scale > 1 ? Math.max(safeBase, Math.min(ratio, max)) : ratio;
+    const iosVersion = getIOSMajorVersion();
+    const cappedBase = iosVersion !== null && iosVersion <= 16 ? Math.min(safeBase, 2) : safeBase;
+    const ratio = cappedBase * scale;
+    return scale > 1 ? Math.max(cappedBase, Math.min(ratio, max)) : ratio;
 };
 
 /** 抗锯齿开不开：auto 用样式自己的默认。 */

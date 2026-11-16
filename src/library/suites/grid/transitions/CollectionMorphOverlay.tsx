@@ -452,10 +452,10 @@ export const CollectionMorphOverlay: React.FC<CollectionMorphOverlayProps> = ({ 
                 style={{ ...boxStyle(cover), overflow: 'hidden', background: leaving ? undefined : 'rgba(127, 127, 127, 0.25)' }}
             >
                 {leaving && flight.from.url && (
-                    <img ref={leavingRef} src={flight.from.url} alt="" draggable={false} decoding="sync" style={pictureStyle(leaving)} />
+                    <img ref={leavingRef} src={flight.from.url} alt="" draggable={false} decoding="async" style={pictureStyle(leaving)} />
                 )}
                 {arriving && flight.arriving && (
-                    <img ref={arrivingRef} src={flight.arriving.url} alt="" draggable={false} decoding="sync" style={{ ...pictureStyle(arriving), opacity: 0 }} />
+                    <img ref={arrivingRef} src={flight.arriving.url} alt="" draggable={false} decoding="async" style={{ ...pictureStyle(arriving), opacity: 0 }} />
                 )}
                 {/* Fills the box, and is scaled with it: the layer as its card draws it over a picture of that size. */}
                 {shade && (

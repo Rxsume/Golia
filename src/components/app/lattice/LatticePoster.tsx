@@ -326,7 +326,7 @@ function LatticePoster({
             {/* The morph reads a card's picture off an <img>: the picture this card paints as its
                 background, drawn once more over it. */}
             {isFlightEnd && coverUrl && (
-                <img className="lattice-poster-cover" src={coverUrl} alt="" draggable={false} decoding="sync" />
+                <img className="lattice-poster-cover" src={coverUrl} alt="" draggable={false} decoding="async" />
             )}
             <span className="lattice-poster-shade" {...(isFlightEnd ? { [MORPH_SHADE_ATTR]: '' } : {})} />
             <span className="lattice-poster-lights-out" />

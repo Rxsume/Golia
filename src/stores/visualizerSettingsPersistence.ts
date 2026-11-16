@@ -11,7 +11,7 @@ import {
 } from '../types/visualizerModes';
 import type { StoredTuning } from '../components/visualizer/tuningDefinition';
 import { resolveSmartBeatSettings, type SmartBeatPatch } from '../services/beatFx/smartBeatSettings';
-import { parseVisualizerFrameRate, VISUALIZER_FRAME_RATE_STORAGE_KEY } from '../utils/frameRateLimiter';
+import { resolveVisualizerFrameRate, VISUALIZER_FRAME_RATE_STORAGE_KEY } from '../utils/frameRateLimiter';
 import { DEFAULT_LYRIC_RENDER_QUALITY, LYRIC_RENDER_QUALITY_STORAGE_KEY, normalizeLyricRenderQuality } from '../utils/lyricRenderQuality';
 
 import { getStoredString } from './storagePrimitives';
@@ -104,7 +104,7 @@ export const readStoredVisualizerFrameRate = (): VisualizerFrameRate => {
         return 'off';
     }
 
-    return parseVisualizerFrameRate(localStorage.getItem(VISUALIZER_FRAME_RATE_STORAGE_KEY));
+    return resolveVisualizerFrameRate(localStorage.getItem(VISUALIZER_FRAME_RATE_STORAGE_KEY));
 };
 
 /** 歌词画布的全局分辨率与抗锯齿挡位（utils/lyricRenderQuality.ts）。 */
