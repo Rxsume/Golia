@@ -27,9 +27,9 @@ export const getCurrentLxBuild = (): number => (
     typeof __LX_BUILD__ === 'undefined' || !Number.isFinite(__LX_BUILD__) ? 0 : __LX_BUILD__
 );
 
-/** The version the settings row shows, for example `Golia 0.7.28-lx6`. */
+/** The version the settings row shows, for example `Golia 0.7.29-lx6`. */
 export const getCurrentAppUpdateLabel = (): string => {
-    const version = typeof __APP_VERSION__ === 'undefined' ? '0.7.28' : __APP_VERSION__;
+    const version = typeof __APP_VERSION__ === 'undefined' ? '0.7.29' : __APP_VERSION__;
     return `Golia ${version}-lx${getCurrentLxBuild()}`;
 };
 
@@ -61,7 +61,7 @@ export const buildAcceleratedDownloadUrl = (
 ): string => `${baseUrl}${directUrl}`;
 
 /**
- * The lx number of a release tag (`v0.7.28-lx5` -> 5), or null when the tag carries none.
+ * The lx number of a release tag (`v0.7.29-lx5` -> 5), or null when the tag carries none.
  * Only the `-lx<N>` suffix counts, so an upstream Folia tag never looks like a Golia build.
  */
 export const parseLxNumber = (tag: string | null | undefined): number | null => {
