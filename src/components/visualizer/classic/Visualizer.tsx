@@ -116,12 +116,32 @@ const Visualizer: React.FC<VisualizerProps> = (props) => {
     ));
 
     useEffect(() => {
+        // resize 事件一阵来：每帧最多只写一次 viewport，且尺寸真变了才写——
+        // 不然每次事件都触发整行布局重算。挂起的帧在 cleanup 里取消。
+        let frame = 0;
+        let lastWidth = window.innerWidth;
+        let lastHeight = window.innerHeight;
         const handleResize = () => {
-            setViewportWidth(window.innerWidth);
-            setViewportHeight(window.innerHeight);
+            if (frame) return;
+            frame = requestAnimationFrame(() => {
+                frame = 0;
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                if (width !== lastWidth) {
+                    lastWidth = width;
+                    setViewportWidth(width);
+                }
+                if (height !== lastHeight) {
+                    lastHeight = height;
+                    setViewportHeight(height);
+                }
+            });
         };
         window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            cancelAnimationFrame(frame);
+        };
     }, []);
 
     const displayWords = useMemo(() => {

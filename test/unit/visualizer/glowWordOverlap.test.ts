@@ -9,6 +9,7 @@ import {
 import { GLOW_WORD_ACTIVE_SCALE } from '@/components/visualizer/glowWordVariants';
 import { getPartitaOverlapSpacing } from '@/components/visualizer/partita/partitaOverlap';
 import type { WordLayoutConfig } from '@/components/visualizer/partita/partitaLayout';
+import { DEFAULT_CLASSIC_TUNING } from '@/types';
 
 // test/unit/visualizer/glowWordOverlap.test.ts
 // 「防止文字重叠」的几何：一个词画出来伸出排版框多少，相邻两词成对算出的间距刚好不碰，以及云阶按它给出的词距、行距。
@@ -204,5 +205,27 @@ describe('getPartitaOverlapSpacing', () => {
         // Upper row reaches 3px up and -3px down; lower 5px down and -5px up: between them -3 + -5.
         expect(spacing[0].marginBottom).toMatch(/^max\(0\.6rem, calc\(calc\([-\d.]+em \+ -8\.0px\) - 2 \* 0\.2rem\)\)$/);
         expect(spacing[1].marginBottom).toMatch(/^max\(0\.6rem, calc\(calc\([-\d.]+em \+ 5\.0px\) - 0\.2rem\)\)$/);
+    });
+});
+
+describe('classic tuning default', () => {
+    // 流光歌词重叠：词默认旋转（普通 ±5°、chaotic ±30°）加放大（active ×1.4），
+    // 但关掉 avoidOverlap 时间距只按缩放算、不考虑旋转，行间也没有补偿。
+    // 实测：200 宽的词，5° 旋转的成对间距比不转的大（85 > 80），30° 旋转的纵向
+    // reach 是不转的近 3 倍（100 > 35）—— 不开 avoidOverlap，横向和纵向都会压到。
+    it('keeps avoidOverlap on by default, next to word rotation', () => {
+        expect(DEFAULT_CLASSIC_TUNING.avoidOverlap).toBe(true);
+        expect(DEFAULT_CLASSIC_TUNING.enableWordRotation).toBe(true);
+    });
+
+    it('needs a wider pair gap once the words turn, and more row room when they turn far', () => {
+        const fontSize = 50;
+        const flat = { width: 200, pose: { scale: 1, rotate: 0, passedRotate: 0 } };
+        const turned5 = { width: 200, pose: { scale: 1, rotate: 5, passedRotate: 5 } };
+        expect(getGlowWordPairGap(turned5, turned5, fontSize))
+            .toBeGreaterThan(getGlowWordPairGap(flat, flat, fontSize));
+        const flatReach = getGlowWordReach(200, fontSize, { scale: 1, rotate: 0, passedRotate: 0 });
+        const turned30Reach = getGlowWordReach(200, fontSize, { scale: 1, rotate: 30, passedRotate: 30 });
+        expect(turned30Reach.halfHeight).toBeGreaterThan(flatReach.halfHeight * 2);
     });
 });

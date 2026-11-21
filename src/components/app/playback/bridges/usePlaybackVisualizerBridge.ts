@@ -453,7 +453,10 @@ export function usePlaybackVisualizerBridge({
             schedule();
         };
         const schedule = () => {
-            if (isBackgroundLyricHeld()) {
+            // 后台节流 hold 住时、或页面本身不可见时，都走 250ms 的慢定时：只保时钟，
+            // 不烧 60fps。iOS 上 hold 已由 visibility 触发，这里主要是对齐桌面端
+            // （hook 在非 iOS 上不挂 hold）和 visibility 刚翻、hold 还没跟上的窗口。
+            if (isBackgroundLyricHeld() || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
                 heldTimer = window.setTimeout(tick, HELD_TICK_MS);
             } else {
                 animationFrameRef.current = requestAnimationFrame(tick);

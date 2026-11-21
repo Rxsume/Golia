@@ -703,6 +703,7 @@ export default {
     "stageWaiting": "Đang chờ tín hiệu Stage",
     "stageActionUnavailable": "Thao tác không hỗ trợ trong chế độ Stage",
     "noPlayableSongs": "Không có bài hát khả dụng trong danh sách",
+    "noPlayableNextSong": "Không có bài hát tiếp theo khả dụng",
     "songUnavailableTag": "Không khả dụng",
     "songVideoTag": "MV",
     "queueShuffled": "Đã xáo trộn hàng đợi",

@@ -1452,8 +1452,13 @@ export function usePlaybackQueueController({
             });
         } else if (options?.allowStopOnMissing) {
             stopAtQueueEnd();
+        } else if (manualQueueStep) {
+            // 手动点下一首，后面却没有一首能播的歌：剩下的都是这台设备上没有播放实现
+            // 的平台、或被标为不可用的歌。告诉用户，而不是什么都不做（自动续播到头
+            // 时走上面的 stopAtQueueEnd，不在这里报）。
+            setStatusMsg({ type: 'info', text: t('status.noPlayableNextSong') });
         }
-    }, [audioRef, currentSong, endHeldTransition, getDisplaySong, isFmMode, isNowPlayingStageActive, loopMode, playQueue, playSong, setPlayQueue, setPlayerState, shouldNavigateToPlayerOnTrackChange]);
+    }, [audioRef, currentSong, endHeldTransition, getDisplaySong, isFmMode, isNowPlayingStageActive, loopMode, playQueue, playSong, setPlayQueue, setPlayerState, setStatusMsg, shouldNavigateToPlayerOnTrackChange, t]);
 
     const handlePrevTrack = useCallback(() => {
         if (isNowPlayingStageActive) return;
@@ -1565,6 +1570,7 @@ export function usePlaybackQueueController({
             loopMode,
             isFmMode,
             isStageActive: isNowPlayingStageActive,
+            isPlayable: isQueueSongPlayable,
         });
         const audioElement = audioRef.current;
         const audioCurrentTimeSec = Number.isFinite(audioElement?.currentTime) ? audioElement?.currentTime ?? 0 : currentTime.get();

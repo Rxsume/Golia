@@ -485,7 +485,11 @@ export const DEFAULT_CLASSIC_TUNING: ClassicTuning = {
   breathingFloatMultiplier: 1,
   useLegacyLayout: false,
   wordSpacing: 0.7,
-  avoidOverlap: false,
+  // 默认就开：词默认是旋转（普通 ±5°、chaotic ±30°）加放大（active ×1.4）的，
+  // 间距却只按缩放算、不考虑旋转，词会压到邻词和上下行。avoidOverlap 的几何
+  // （glowWordOverlap.ts）本身是对的，只是默认没开。手动关过的用户不受影响
+  // （tuning.ts 读 stored.avoidOverlap ?? 这个默认值）。
+  avoidOverlap: true,
 };
 
 export interface CadenzaTuning {

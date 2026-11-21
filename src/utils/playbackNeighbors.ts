@@ -183,6 +183,14 @@ type ResolvePlaybackNeighborsParams = {
     isFmMode: boolean;
     isStageActive: boolean;
     /**
+     * Whether a song can be played at all. When given, "next" is the next playable song
+     * (the one handleNextTrack would actually play, skipping the unplayable ones) and
+     * canGo is false when no playable song remains ahead — so the button matches the
+     * handler. Callers that cannot see the playability check (utils, which may not
+     * depend on components) leave it out and keep the position-only answer.
+     */
+    isPlayable?: (song: SongResult) => boolean;
+    /**
      * 是否连艺术家与封面一起解析。这两项要走 provider 元数据（注册表查找 + 新建元数据对象），
      * 只有需要预读下一首的遥控窗口用得上；浮动播放条只读 canGo 与 title，默认不付这份开销。
      */
@@ -205,6 +213,7 @@ export const resolvePlaybackNeighbors = ({
     loopMode,
     isFmMode,
     isStageActive,
+    isPlayable,
     withMetadata = false,
 }: ResolvePlaybackNeighborsParams): PlaybackNeighbors => {
     // 舞台播放时两个 handler 都会直接 return，这里必须同步禁用，否则箭头点了没反应
@@ -227,7 +236,13 @@ export const resolvePlaybackNeighbors = ({
 
     const indexLoopMode = queueLoopMode(loopMode, isFmMode);
     const prevIndex = prevQueueIndex(playQueue.length, currentIndex, indexLoopMode);
-    const nextIndex = nextQueueIndex(playQueue.length, currentIndex, indexLoopMode);
+    // handleNextTrack steps with nextPlayableQueueIndex, not nextQueueIndex: when the songs
+    // ahead are all unplayable (a platform without playback on this device, or marked
+    // unavailable) it finds no next track. The button must say the same, or the listener
+    // presses "next" on a playlist that looks like it has a next song and nothing happens.
+    const nextIndex = isPlayable
+        ? nextPlayableQueueIndex(playQueue, currentIndex, indexLoopMode, isPlayable)
+        : nextQueueIndex(playQueue.length, currentIndex, indexLoopMode);
 
     // FM 走到队列末尾时会追加新曲目再跳，标题此刻无法预知
     const fmWillFetch = isFmMode && fmNextIsUnfetchedAt(playQueue.length, currentIndex);

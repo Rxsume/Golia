@@ -703,6 +703,7 @@ export default {
     "stageWaiting": "Menunggu input Stage eksternal",
     "stageActionUnavailable": "Aksi ini tidak tersedia di mode Stage",
     "noPlayableSongs": "Tidak ada lagu yang bisa diputar di daftar ini",
+    "noPlayableNextSong": "Tidak ada lagu berikutnya yang bisa diputar",
     "songUnavailableTag": "Tidak Tersedia",
     "songVideoTag": "MV",
     "queueShuffled": "Antrean diacak",

@@ -210,3 +210,28 @@ describe('canGo against what the handlers do', () => {
         }
     });
 });
+
+describe('resolvePlaybackNeighbors with isPlayable', () => {
+    // 「有些歌单无法下一首」：歌单里剩下的歌若来自这台设备上没有播放实现的平台、或被标为
+    // 不可用，handleNextTrack 会一个一个跳过它们、到头停住；按钮必须说同一件事，否则按下去
+    // 什么都不发生。这里的 isPlayable 按 id 划：'b' 是不可播的那首。
+    const isPlayable = (song: SongResult) => song.id !== 'b';
+
+    it('skips an unplayable next song and points at the playable one after it', () => {
+        // 当前是 a（可播），后面是 b（不可播）、c（可播）：下一首应是 c，不是 b。
+        const result = resolve({ currentSong: queue[0], isPlayable });
+        expect(result.next).toEqual({ canGo: true, key: keyOf(queue[2]), title: 'Charlie', artist: null, coverUrl: null });
+        // 上一首不跳：handlePrevTrack 按位置播，不按可播性筛。
+        expect(resolve({ isPlayable }).prev).toEqual({ canGo: true, key: keyOf(queue[0]), title: 'Alpha', artist: null, coverUrl: null });
+    });
+
+    it('blocks next when every song ahead is unplayable', () => {
+        const result = resolve({ currentSong: queue[1], isPlayable: (song: SongResult) => song.id === 'a' });
+        expect(result.next).toEqual({ canGo: false, key: null, title: null, artist: null, coverUrl: null });
+    });
+
+    it('keeps the position-only answer when isPlayable is not given', () => {
+        const result = resolve();
+        expect(result.next).toEqual({ canGo: true, key: keyOf(queue[2]), title: 'Charlie', artist: null, coverUrl: null });
+    });
+});

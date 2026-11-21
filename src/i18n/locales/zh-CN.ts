@@ -703,6 +703,7 @@ export default {
     "stageWaiting": "等待连接",
     "stageActionUnavailable": "Stage 模式下不支持这个操作",
     "noPlayableSongs": "列表中没有可播放的歌曲",
+    "noPlayableNextSong": "后面没有可播放的下一首",
     "songUnavailableTag": "已下架",
     "songVideoTag": "MV",
     "queueShuffled": "播放队列已打乱",

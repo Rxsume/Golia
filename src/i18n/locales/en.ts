@@ -703,6 +703,7 @@ export default {
     "stageWaiting": "Waiting for external Stage input",
     "stageActionUnavailable": "This action is unavailable in Stage mode",
     "noPlayableSongs": "No playable songs in this list",
+    "noPlayableNextSong": "No playable next song",
     "songUnavailableTag": "Unavailable",
     "songVideoTag": "MV",
     "queueShuffled": "Queue shuffled",

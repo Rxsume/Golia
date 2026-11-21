@@ -667,7 +667,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
                 // 平台说还有、这一页却是空的（或游标没往前走）：当作到头了。滚到底会自动接着要，
                 // 不在这里停下，就会对着同一个 offset 一直要下去。
                 const advanced = result.results.length + result.collections.length > 0
-                    && (result.aggregated || nextOffset > offset);
+                    && (result.aggregated !== undefined || nextOffset > offset);
                 const hasMore = result.hasMore && advanced;
                 return {
                     searchResults: results,

@@ -15,22 +15,37 @@ const PASSED_TURN_SAMPLES = 8;
 
 let measureCanvas: HTMLCanvasElement | null = null;
 
+// 每次布局重算都对每个词调一次 canvas measureText：同一首歌词、同一字号，
+// 同一个词会被反复量。按（文本、字号、字体栈、字重）缓存结果——键里含字重，
+// 测量与实际渲染用的就是同一个字重。歌词量有限，满 512 条就清掉重算。
+const MEASURE_CACHE_MAX = 512;
+const measureCache = new Map<string, number>();
+
 /**
  * Measures the width of a given word text using a 2D canvas context.
  */
 export const measureGlowWordWidth = (text: string, pxSize: number, fontStack: string, fontWeight: number): number => {
+    const cacheKey = `${fontWeight}|${pxSize}|${fontStack}|${text}`;
+    const cached = measureCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    let width: number;
     if (typeof document === 'undefined') {
-        return text.length * pxSize * 0.65;
+        width = text.length * pxSize * 0.65;
+    } else {
+        if (!measureCanvas) {
+            measureCanvas = document.createElement('canvas');
+        }
+        const context = measureCanvas.getContext('2d');
+        if (!context) {
+            width = text.length * pxSize * 0.65;
+        } else {
+            context.font = `${fontWeight} ${pxSize}px ${fontStack}`;
+            width = context.measureText(text).width;
+        }
     }
-    if (!measureCanvas) {
-        measureCanvas = document.createElement('canvas');
-    }
-    const context = measureCanvas.getContext('2d');
-    if (!context) {
-        return text.length * pxSize * 0.65;
-    }
-    context.font = `${fontWeight} ${pxSize}px ${fontStack}`;
-    return context.measureText(text).width;
+    if (measureCache.size >= MEASURE_CACHE_MAX) measureCache.clear();
+    measureCache.set(cacheKey, width);
+    return width;
 };
 
 /** A word's transform as the layout variants (glowWordVariants.ts) read it from its config. */

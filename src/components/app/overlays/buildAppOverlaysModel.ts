@@ -8,6 +8,7 @@ import type NowPlayingToast from './NowPlayingToast';
 import { PlayerState } from '../../../types';
 import type { SongResult, UnifiedSong, LyricData } from '../../../types';
 import { resolvePlaybackNeighbors } from '../../../utils/playbackNeighbors';
+import { isQueueSongPlayable } from '../playback/playableSong';
 import { getPlaybackSongKey } from '../../../utils/appPlaybackGuards';
 import { getSongAlbumLabel, getSongArtistLabel } from '../../../services/onlineMusic/songMetadata';
 import { setPlayerState } from '../../../stores/usePlaybackStore';
@@ -326,6 +327,7 @@ export const buildAppOverlaysModel = ({
                         loopMode: effectiveLoopMode,
                         isFmMode,
                         isStageActive: isNowPlayingStageActive,
+                        isPlayable: isQueueSongPlayable,
                     });
 
                     return {
