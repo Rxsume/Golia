@@ -92,11 +92,17 @@ const BravaisSeamHomeTools: React.FC<{
     // 横的信息条在视口上半时菜单往下弹（工具格一直挂着，dockRef 在打开菜单的那次渲染里已经有值）。
     const pop = bravaisPopMotion(seamPopAnchorFor(dockRef.current), useBravaisReducedTransitions());
 
-    // 书脊上点了「⋯」：缝展开成窄缝后在这里把菜单打开。
+    // 方案 C：本页的项提成格子以后「⋯」可能整个不画；菜单开着时「⋯」没了，把开着的状态一起收掉，免得「⋯」再出现时
+    // 菜单自己弹出来。
     useEffect(() => {
-        if (compact || request !== 'menu') return;
+        if (!hasMenu && menuOpen) closeBravaisHomePopover('menu');
+    }, [hasMenu, menuOpen]);
+
+    // 书脊上点了「⋯」：缝展开成窄缝后在这里把它打开。
+    useEffect(() => {
+        if (compact || request === null) return;
         setBravaisHomeOpenRequest(null);
-        setBravaisHomePopover('menu');
+        setBravaisHomePopover(request);
     }, [compact, request]);
 
     // 卸载时收起自己开着的菜单，下次挂载不带着旧的开合。只收「这个实例开着的」：书脊翻成窄缝时新实例先挂上、经

@@ -2,7 +2,7 @@ import md5 from 'blueimp-md5';
 import { OnlineProviderError } from '../../../types/onlineMusic';
 import { readProviderSessionValue, removeProviderSessionValue, writeProviderSessionValue } from '../providerStorage';
 import { lyricProxyWebUrl, requestLyricProxyOnDesktop } from '../../lyricProxy';
-import { withLoginRequestLimit } from '../login/loginRequestLimit';
+import { withLoginRequestLimit } from '@folia/folium-source-kit';
 import { hasNativeHttp, requestNativeHttp } from '../capacitorHttp';
 import { rsaRawEncrypt } from '../../../utils/rsaRaw';
 import { asRecord } from '../../../utils/record';

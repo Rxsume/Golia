@@ -2,7 +2,7 @@ import { OnlineProviderError } from '../../../types/onlineMusic';
 import type { ProviderErrorCode } from '../../../types/onlineMusic';
 import type { QishuiOperation, QishuiParams, QishuiBridgeResult } from 'qishui-music-api';
 import { hasNativeHttp } from '../capacitorHttp';
-import { withLoginRequestLimit } from '../login/loginRequestLimit';
+import { withLoginRequestLimit } from '@folia/folium-source-kit';
 import { withOnlineRequestLimit } from '../failure/onlineRequestLimit';
 import { createQishuiDirectApi } from './direct/api';
 import type { QishuiDirectApi } from './direct/api';

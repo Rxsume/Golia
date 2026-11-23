@@ -79,6 +79,8 @@ const everything = (declaredActions?: LibraryDeclaredActions): GridSurfaceParams
     canOrganizeSongInfo: true,
     canReorderPlaylist: true,
     canExportPlaylist: true,
+    canSaveToFolia: true,
+    canRefreshFromOrigin: true,
     canEditEntity: true,
     canSetCover: true,
     canEditPlaylist: true,

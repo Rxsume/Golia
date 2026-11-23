@@ -1,0 +1,286 @@
+import type { FoliumSourceCollection, FoliumSourceFmCatalog, FoliumSourceRecommendations, FoliumSourceSong } from '@folia/folium';
+import { personalFmModes } from '@folia/folium-source-kit';
+import { isQqError, qqError, qqTextKey } from './qqEnv';
+import { normalizeQqCollection, normalizeQqSong } from './qqNormalize';
+import { getQqRecommendationPreferences, saveQqRecommendationPreferences } from './qqPreferences';
+import { hasUsableQqSession, requestQq, requestQqMusicu, type QqOperation } from './qqTransport';
+import { asRecord } from '../../../src/utils/record';
+import { getQqGuessYouLikeBatch, getQqGuessYouLikeCard, getQqGuessYouLikeCatalog, QQ_GUESS_YOU_LIKE_STATION, type QqFmRequest } from './qqGuessYouLike';
+
+// sources/qq/core/qqRecommendations.ts
+// QQ 音乐的推荐：私人 FM、每日 30 首与它的历史、推荐歌单，以及歌曲不喜欢。猜你喜欢与推荐歌单是 qq-music-api 3.2.0 加的，每日 30 首是 3.3.0，私人 FM、历史日推与不喜欢是 3.3.6，
+// 出错时用状态码加固定的 errorKey 说明原因：422 是「上游成功但没有数据」，不是网络错误；旧后端没有这些路由，回 404。
+
+// 422（resource.not-found）是确实没有数据；404 是这个后端还没有这条路由。两者都当成空结果，不算失败。
+const isEmptyAnswer = (error: unknown): boolean => isQqError(error) && (
+    error.code === 'unsupported'
+    || (error.code === 'network' && error.httpStatus === 422)
+);
+
+const songsOf = (response: any): FoliumSourceSong[] => (Array.isArray(response?.songs) ? response.songs : [])
+    .map(normalizeQqSong)
+    .filter((song: FoliumSourceSong) => Boolean(song.lyricIds?.qq));
+
+/** 读一条回 `{ songs }` 的推荐路由。这几条都要登录：没有会话、或会话这次停用（不带）时不发请求，免得白收一个 401。 */
+const loadRecommendedSongs = async (operation: QqOperation): Promise<FoliumSourceSong[]> => {
+    if (!hasUsableQqSession()) return [];
+    try {
+        return songsOf(await requestQq<any>(operation));
+    } catch (error) {
+        if (isEmptyAnswer(error)) return [];
+        throw error;
+    }
+};
+
+/**
+ * 私人 FM 的一批。每次都要第 1 页：这里分不清这一批是进了播放队列，还是只给首页电台卡当封面，
+ * 不记页码去推进，免得一张封面就吃掉一批。旧后端没有这条路由（404）时照旧读猜你喜欢。
+ */
+const loadPersonalFmBatch = async (): Promise<FoliumSourceSong[]> => {
+    if (!hasUsableQqSession()) return [];
+    try {
+        return songsOf(await requestQq<any>('user_personal_fm', { page: 1 }));
+    } catch (error) {
+        if (isQqError(error, 'unsupported')) return loadRecommendedSongs('user_guess_you_like');
+        if (isEmptyAnswer(error)) return [];
+        throw error;
+    }
+};
+
+/**
+ * 私人 FM 一批（每批几首）；带着猜你喜欢电台（station）时是那个电台按所选模式的一批。私人 FM 没有模式，
+ * 不看 mode。批内去重；跨批的重复交给续歌的地方按队列去掉（utils/fmQueue）。
+ * 失败只记日志、回空：FM 续歌和首页电台卡都按「这次没有歌」处理，不让一次上游拒绝（22006）拖垮整页。
+ */
+const getPersonalFm = async (options?: QqFmRequest): Promise<FoliumSourceSong[]> => {
+    try {
+        const batch = options?.station === QQ_GUESS_YOU_LIKE_STATION
+            ? await getQqGuessYouLikeBatch(options)
+            : await loadPersonalFmBatch();
+        return batch.filter((song, index) => batch.findIndex(other => other.id === song.id) === index);
+    } catch (error) {
+        console.warn('[QQProvider] personal-fm:failed', error);
+        return [];
+    }
+};
+
+// 后端没有 refresh 参数，同一天拿到的是同一批，所以忽略「换一批」。
+const getDailySongsWorker = (): Promise<FoliumSourceSong[]> => loadRecommendedSongs('user_daily_songs');
+
+// 每日 30 首的匿名兜底（Worker 那路用不了时）：新歌（type 5）优先、新歌榜（topId 27，当天日期）备用。
+// 都是 musicu 直连、匿名可读（2026-11-16 直连实测：新歌 47 首、新歌榜 30 首，都有 mid 与歌手）。
+// 取 30 首，与每日 30 首的量一致。任一路由没给歌或被拒时回 []，由调用方试下一条。
+const DAILY_SONGS_ANONYMOUS_LIMIT = 30;
+
+const dailySongsFromNewSongs = async (): Promise<FoliumSourceSong[]> => {
+    const answer = await requestQqMusicu({
+        newsong: {
+            module: 'newsong.NewSongServer',
+            method: 'get_new_song_info',
+            param: { type: 5 },
+        },
+    });
+    const list = answer.newsong;
+    if (list.code !== 0) return [];
+    const songs = asRecord(list.data)?.songlist;
+    if (!Array.isArray(songs)) return [];
+    return songs.map(normalizeQqSong).filter((song: FoliumSourceSong) => Boolean(song.lyricIds?.qq)).slice(0, DAILY_SONGS_ANONYMOUS_LIMIT);
+};
+
+const dailySongsFromToplist = async (): Promise<FoliumSourceSong[]> => {
+    const now = new Date();
+    const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const answer = await requestQqMusicu({
+        toplist: {
+            module: 'musicToplist.ToplistInfoServer',
+            method: 'GetDetail',
+            param: { topId: 27, offset: 0, num: DAILY_SONGS_ANONYMOUS_LIMIT, period },
+        },
+    });
+    const list = answer.toplist;
+    if (list.code !== 0) return [];
+    const songs = asRecord(list.data)?.songInfoList;
+    if (!Array.isArray(songs)) return [];
+    return songs.map(normalizeQqSong).filter((song: FoliumSourceSong) => Boolean(song.lyricIds?.qq)).slice(0, DAILY_SONGS_ANONYMOUS_LIMIT);
+};
+
+// 匿名兜底：新歌优先、新歌榜备用；两条都没给歌时回 []。
+const loadDailySongsAnonymously = async (): Promise<FoliumSourceSong[]> => {
+    try {
+        const songs = await dailySongsFromNewSongs();
+        if (songs.length > 0) return songs;
+    } catch (error) {
+        console.warn('[QQProvider] daily-songs-new-songs:failed', error);
+    }
+    try {
+        const songs = await dailySongsFromToplist();
+        if (songs.length > 0) return songs;
+    } catch (error) {
+        console.warn('[QQProvider] daily-songs-toplist:failed', error);
+    }
+    return [];
+};
+
+/**
+ * 每日 30 首：有会话先走 Worker；Worker 真失败时（不是没数据）走匿名兜底，兜底也没歌时把 Worker 原来的错交出去。
+ * 没会话时直接走匿名兜底，兜底失败回 []。Worker 和匿名不并行：匿名是 Worker 失败后的退路，不是备选。
+ */
+const getDailySongs = async (): Promise<FoliumSourceSong[]> => {
+    if (!hasUsableQqSession()) return loadDailySongsAnonymously();
+    try {
+        return await getDailySongsWorker();
+    } catch (error) {
+        if (isEmptyAnswer(error)) return [];
+        const anonymous = await loadDailySongsAnonymously();
+        if (anonymous.length > 0) return anonymous;
+        throw error;
+    }
+};
+
+/** 每日 30 首有历史的日期（`YYYY-MM-DD`），照后端的顺序；可能不连续，不在这里补日子。 */
+const getHistoryDates = async (): Promise<string[]> => {
+    if (!hasUsableQqSession()) return [];
+    try {
+        const response = await requestQq<any>('user_daily_history_dates');
+        const dates: unknown[] = Array.isArray(response?.dates) ? response.dates : [];
+        return dates.filter((date): date is string => typeof date === 'string' && date !== '');
+    } catch (error) {
+        if (isEmptyAnswer(error)) return [];
+        throw error;
+    }
+};
+
+// 某一天的每日 30 首；后端给几首就是几首，不补到 30。
+const getHistorySongs = async (entry: { id: string } | string): Promise<FoliumSourceSong[]> => {
+    if (!hasUsableQqSession()) return [];
+    try {
+        return songsOf(await requestQq<any>('user_daily_history', { date: typeof entry === 'string' ? entry : entry.id }));
+    } catch (error) {
+        if (isEmptyAnswer(error)) return [];
+        throw error;
+    }
+};
+
+/** 上游已经收下这次写入（accepted）：读回失败时它带在非 2xx 的错误体里。 */
+const writeAccepted = (body: any): boolean => body?.writeAttempted === true && body?.accepted === true;
+
+/**
+ * 不喜欢这首歌：拉进账号的歌曲黑名单。手机上私人 FM、各个电台和每日 30 首的「不喜欢」都是这一下，
+ * 不带电台或歌单的上下文。后端只认数字 songid。上游收下写入（accepted）就算成功：它只读黑名单首屏核对，
+ * 首屏没看到（verified false）或核对那一读失败，都不说明没写进去；这时报失败只会让人再点一次、再写一次。
+ * 只记日志里核对了没有。上游没收下才报错，都不重送。QQ 不给替换的歌，所以回 removed。
+ */
+const dislikeSong = async (id: string): Promise<{ removed: true }> => {
+    const songId = String(id ?? '').trim();
+    if (!/^[1-9]\d*$/.test(songId)) {
+        throw qqError('invalid-response', 'QQ song has no numeric song id for a dislike');
+    }
+    try {
+        const response = await requestQq<any>('user_blacklist_add', {}, { songs: [songId] });
+        if (response?.verified !== true && response?.accepted !== true) {
+            throw qqError('invalid-response', 'QQMusicApi user_blacklist_add returned no acknowledgement', response);
+        }
+        console.info('[QQProvider] dislike:accepted', { verified: response?.verified === true });
+        // QQ 没有替换曲：回 removed，日推视图据此把这一行去掉。
+        return { removed: true };
+    } catch (error) {
+        if (isQqError(error) && writeAccepted(error.cause)) {
+            console.warn('[QQProvider] dislike:accepted, read-back failed', error);
+            return { removed: true };
+        }
+        console.warn('[QQProvider] dislike:failed', error);
+        throw error;
+    }
+};
+
+// `/recommend/playlists` 的 limit 默认 25、最多 60；有会话就带凭证读，没有就匿名读。
+const RECOMMEND_PLAYLISTS_MAX = 60;
+
+// Worker 那路用不了时，推荐歌单改走 musicu 直连：`playlist.HotRecommendServer/get_hot_recommend`
+// 是 QQ 自己的「为你推荐」歌单，匿名可读（2026-11-14 直连实测：HTTP 200，12 条）。
+// 条目按 normalizeQqCollection 认的字段名转一手：content_id → dissid、cover → picUrl、
+// listen_num → play_cnt。上游没有回答或拒绝时回 []，由调用方按「没有推荐歌单」处理。
+const getRecommendedPlaylistsDirectly = async (limit: number): Promise<FoliumSourceCollection[]> => {
+    const answer = await requestQqMusicu({
+        recomPlaylist: {
+            module: 'playlist.HotRecommendServer',
+            method: 'get_hot_recommend',
+            param: { async: 1, cmd: 2 },
+        },
+    });
+    const hot = answer.recomPlaylist;
+    if (hot.code !== 0) return [];
+    const items = asRecord(hot.data)?.v_hot;
+    if (!Array.isArray(items)) return [];
+    return items
+        .map((item: unknown) => {
+            const entry = asRecord(item) ?? {};
+            return normalizeQqCollection({
+                dissid: entry.content_id,
+                title: entry.title,
+                picUrl: entry.cover,
+                desc: entry.rcmdcontent || entry.rcmdtemplate,
+                play_cnt: entry.listen_num,
+            });
+        })
+        .filter((collection: FoliumSourceCollection) => collection.id !== '' && Boolean(collection.name))
+        .slice(0, limit);
+};
+
+const getRecommendedPlaylists = async (limit: number): Promise<FoliumSourceCollection[]> => {
+    const safeLimit = Math.min(RECOMMEND_PLAYLISTS_MAX, Math.max(1, Math.floor(limit) || 1));
+    try {
+        const response = await requestQq<any>('recommend_playlists', { limit: safeLimit });
+        const playlists = Array.isArray(response?.playlists) ? response.playlists : [];
+        return playlists
+            .map((item: unknown) => normalizeQqCollection(item))
+            .filter((collection: FoliumSourceCollection) => collection.id !== '' && Boolean(collection.name))
+            .slice(0, safeLimit);
+    } catch (error) {
+        // 首页三块推荐一起取，推荐歌单失败不该连 FM 和日推一起拖下去。
+        if (!isEmptyAnswer(error)) console.warn('[QQProvider] recommended-playlists:failed', error);
+        // Worker 那路失败（超时、挂起、网络错）时走 musicu 直连；直连也失败时照旧回 []。
+        try {
+            return await getRecommendedPlaylistsDirectly(safeLimit);
+        } catch (directError) {
+            console.warn('[QQProvider] recommended-playlists-direct:failed', directError);
+            return [];
+        }
+    }
+};
+
+/** 电台页：猜你喜欢电台的卡片排在推荐歌单前面；它读不到不影响推荐歌单。 */
+const getRecommendedCollections = async (limit: number): Promise<FoliumSourceCollection[]> => {
+    const [card, playlists] = await Promise.all([
+        getQqGuessYouLikeCard().catch(error => {
+            console.warn('[QQProvider] guess-you-like-card:failed', error);
+            return null;
+        }),
+        getRecommendedPlaylists(limit),
+    ]);
+    return card ? [card, ...playlists].slice(0, Math.max(1, Math.floor(limit) || 1)) : playlists;
+};
+
+/**
+ * 猜你喜欢电台的模式目录。私人 FM 没有模式（不宣告 personalFmModes）：只有默认一种（迁之前交宿主的整份默认目录，
+ * 宿主在没有宣告模式的平台上不拿它给人选）；别的电台 id 不认。
+ */
+const getPersonalFmCatalog = async (station?: string): Promise<FoliumSourceFmCatalog> => {
+    if (station === QQ_GUESS_YOU_LIKE_STATION) return getQqGuessYouLikeCatalog();
+    if (!station) return { modes: personalFmModes(['DEFAULT'], id => qqTextKey(`fm.mode.${id}`)), scenes: [], categories: [] };
+    throw qqError('unsupported', 'QQ has no such station');
+};
+
+export const qqRecommendations: FoliumSourceRecommendations = {
+    getPersonalFm,
+    getPersonalFmCatalog,
+    getDailySongs,
+    getRecommendedCollections,
+    getHistoryDates,
+    getHistorySongs,
+    dislikeSong,
+    // 账号的音乐偏好同时影响私人 FM 和每日 30 首，所以三处都开入口。
+    preferenceEntries: ['explore', 'personal-fm', 'daily'],
+    getRecommendationPreferences: getQqRecommendationPreferences,
+    saveRecommendationPreferences: saveQqRecommendationPreferences,
+};

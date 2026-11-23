@@ -20,6 +20,7 @@ import { useProviderSignOut } from './components/app/dialogs/useProviderSignOut'
 import LoginHost from './components/login/LoginHost';
 import { useSettingsDialogModel } from './components/app/dialogs/useSettingsDialogModel';
 import AppOverlays from './components/app/overlays/AppOverlays';
+import SurfacePlaybackHost from './components/app/playback/surface/SurfacePlaybackHost';
 import PonderHost from './components/ponder/PonderHost';
 // Lazy so animejs (~38KB gz) stays out of the bootstrap chunk: this overlay only ever draws when the
 // animation switch is on AND the mode is automix, both off by default, so it is mounted only then.
@@ -84,7 +85,6 @@ import { consumeProgrammaticPause, playbackFade } from './services/playbackFade'
 import { getSongAlbumLabel, getSongArtistLabel, getSongCoverUrl } from './services/onlineMusic/songMetadata';
 import { isNavidromeEnabled } from './services/navidromeService';
 import { useAppNavigation } from './hooks/useAppNavigation';
-import { useNeteaseLibrary } from './hooks/useNeteaseLibrary';
 import { useLibraryAccountController } from './library/app/useLibraryAccountController';
 import { createLibraryAccountSwitchCleanupPort } from './library/app/createLibraryAccountPort';
 import { useAppWallToolsHost } from './components/app/wall-tools/useAppWallToolsHost';
@@ -774,14 +774,6 @@ export default function App() {
         loadMoreSearchResults: state.loadMoreSearchResults,
     })));
 
-    // Netease Library Hook
-    // the NetEase account as the account store holds it
-    const {
-        user,
-        playlists,
-        cloudPlaylist,
-    } = useNeteaseLibrary();
-
     // Every platform's account is read and signed out of through omni (services/onlineMusic/account/),
     // NetEase like the others.
     // 在线账户 controller（Library v2 · A4）：登录、选平台、切换确认与登出都在 core，App 只交出退出与退出前的那一问
@@ -869,7 +861,6 @@ export default function App() {
         toggleTransparentModeWithHandoff,
     } = useElectronWindowPlaybackHandoff({
         isElectronWindow,
-        userId: user?.id,
         navigateToPlayer,
         audioRef,
         mainPlaybackSnapshotRef,
@@ -914,12 +905,10 @@ export default function App() {
         openLyricMatch,
         closeLyricMatch,
         loadLocalSongs,
-        loadLocalPlaylists,
+        loadFoliaPlaylists,
         onRefreshLocalSongs,
-        isLocalSongLiked,
-        saveCurrentQueueAsLocalPlaylist,
-        addPickedSongsToLocalPlaylist,
-        createLocalPlaylistWithSongs,
+        isFoliaSongLiked,
+        saveCurrentQueueAsPlaylist,
         addPickedSongsToOnlinePlaylist,
         createOnlinePlaylistWithSongs,
         addPickedSongsToNavidromePlaylist,
@@ -941,7 +930,6 @@ export default function App() {
         handleAutoMatchBestLyricForCurrentSong,
         handleLike,
     } = useLibraryPlaybackController({
-        userId: user?.id,
         setLyrics,
         setIsLyricsLoading,
         lyricsLoadingWritesRef,
@@ -957,7 +945,6 @@ export default function App() {
     });
 
     useSessionRestoreController({
-        userId: user?.id,
         blobUrlRef,
         currentOnlineAudioUrlFetchedAtRef,
         setLyrics,
@@ -965,7 +952,7 @@ export default function App() {
         persistLastPlaybackCache,
         clearPersistedStagePlaybackCache,
         loadLocalSongs,
-        loadLocalPlaylists,
+        loadFoliaPlaylists,
         canRestoreSession: windowPlaybackHandoffRestoreStatus === 'none',
         shouldAutoPlayRef: shouldAutoPlay,
     });
@@ -999,8 +986,7 @@ export default function App() {
         t,
         queueAddBehavior,
         audioQuality,
-        userId: user?.id,
-    }), [currentSong, playQueue, persistLastPlaybackCache, t, queueAddBehavior, audioQuality, user?.id]);
+    }), [currentSong, playQueue, persistLastPlaybackCache, t, queueAddBehavior, audioQuality]);
 
     // --- Effects ---
 
@@ -1039,7 +1025,6 @@ export default function App() {
         localSongs,
         localPlaylists,
         localLibraryCatalog,
-        userId: user?.id,
         setLyrics,
         setIsLyricsLoading,
         navigateToPlaybackView,
@@ -1111,7 +1096,7 @@ export default function App() {
     usePlaybackUiEffects({
         statusMsg,
         loadLocalSongs,
-        loadLocalPlaylists,
+        loadFoliaPlaylists,
         localMusicUpdatedEvent: LOCAL_MUSIC_UPDATED_EVENT,
         blobUrlRef,
         volumePreviewFrameRef,
@@ -1522,7 +1507,7 @@ export default function App() {
         isTrackTransitionAudible: automix.isTransitionAudible,
         // Keyed on the displayed track, so the like state matches the song the remote is showing
         // while a blend is held rather than the one arriving underneath it.
-        isLiked: resolveSongLiked(displaySong, { isLocalSongLiked, starredNavidromeSongIds }),
+        isLiked: resolveSongLiked(displaySong, { isFoliaSongLiked, starredNavidromeSongIds }),
         onLike: handleLike,
     });
 
@@ -1802,7 +1787,7 @@ export default function App() {
         runAutoMatchBestLyric: handleAutoMatchBestLyricForCurrentSong,
         toggleCurrentSongPureMusicMark: handleToggleCurrentSongPureMusicMark,
         toggleSongLike: handleLike,
-        isSongLiked: resolveSongLiked(displaySong, { isLocalSongLiked, starredNavidromeSongIds }),
+        isSongLiked: resolveSongLiked(displaySong, { isFoliaSongLiked, starredNavidromeSongIds }),
 
         navigateToHome,
         navigateToPlayer,
@@ -2149,7 +2134,7 @@ export default function App() {
         controlsDisabled: isNowPlayingControlDisabled,
         isLyricsLoading,
         persistQueue: persistLastPlaybackCache,
-        refreshQueuePrefetch: (song, previous, next) => refreshPrefetchAfterQueueEdit(song, previous, next, audioQuality, user?.id),
+        refreshQueuePrefetch: (song, previous, next) => refreshPrefetchAfterQueueEdit(song, previous, next, audioQuality),
     });
 
     const visualizerRendererModel = useVisualizerRendererModel({
@@ -2217,7 +2202,7 @@ export default function App() {
         removeQueueSong,
         moveQueueSong,
         clearQueue,
-        saveCurrentQueueAsLocalPlaylist,
+        saveCurrentQueueAsPlaylist,
     });
     // 遥控窗口展开的队列：点歌、下一首播放、移到末尾、移除，走浮岛的同一组队列动作。
     useRemoteQueueCommands(wallToolsHost, playQueue, isNowPlayingControlDisabledRef);
@@ -2230,16 +2215,13 @@ export default function App() {
         togglePlayback: togglePlay,
         enterPlaybackView: navigateFromPlayerCapsule,
         refreshOnlineProviderPlaylists: refreshActiveProviderPlaylists,
-        user,
-        playlists,
-        cloudPlaylist,
         focusedPlaylistIndex,
         setFocusedPlaylistIndex,
         navigateToSearch,
         localSongs,
         localLibraryCatalog,
         localPlaylists,
-        onRefreshLocalPlaylists: loadLocalPlaylists,
+        onRefreshLocalPlaylists: loadFoliaPlaylists,
         onRefreshLocalSongs,
         onAddLocalSongToQueue: handleLocalQueueAdd,
         localMusicState,
@@ -2325,13 +2307,13 @@ export default function App() {
         removeQueueSong,
         moveQueueSongToEnd,
         moveQueueSongToNext,
-        saveCurrentQueueAsLocalPlaylist,
+        saveCurrentQueueAsPlaylist,
         accountController,
         handleSyncData: handleActiveProviderSyncData,
         isSyncing: isProviderSyncing,
         handleToggleDaylight: toggleDaylightMode,
         // Derived inside the hook, but these are the sources only App.tsx holds.
-        isLocalSongLiked,
+        isFoliaSongLiked,
         shouldHidePlayerRightPanelButton,
         localSongs,
         localLibraryCatalog,
@@ -2892,6 +2874,9 @@ export default function App() {
             </AnimatePresence>
             </WallToolsDockHost>
 
+            {/* Folium `playback.surface`: a source's own picture under the player page, kept for the window's life. */}
+            <SurfacePlaybackHost visible={currentView === 'player'} />
+
             {/* --- VISUALIZER (Background Layer & Main Click Target) --- */}
             {/* 指针隐藏跟着控制栏的空闲时钟走，不另起一套计时：控件收起时页面上已经没有可点的东西，
                 所以指针一起消失；任何鼠标移动都会同时唤回两者。class 只挂在这个视觉层容器上，
@@ -2959,13 +2944,11 @@ export default function App() {
                 question about the current song, and a shortcut has to reach it with the panel shut. */}
             <AddToPlaylistHost
                 isDaylight={isDaylight}
-                localPlaylists={localPlaylists}
-                onAddSongsToLocalPlaylist={addPickedSongsToLocalPlaylist}
-                onCreateLocalPlaylistWithSongs={createLocalPlaylistWithSongs}
                 onAddSongsToOnlinePlaylist={addPickedSongsToOnlinePlaylist}
                 onCreateOnlinePlaylistWithSongs={createOnlinePlaylistWithSongs}
                 onAddSongsToNavidromePlaylist={addPickedSongsToNavidromePlaylist}
                 onCreateNavidromePlaylistWithSongs={createNavidromePlaylistWithSongs}
+                isFoliaSongLiked={isFoliaSongLiked}
             />
 
             {/* 速记簿：左缘的把手与滑出的抽屉，非模态，三个视图里都在；播放页隐藏 UI 时把手跟着藏起来。 */}

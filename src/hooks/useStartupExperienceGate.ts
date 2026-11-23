@@ -3,6 +3,7 @@ import { USER_GUIDE_AUTO_OPEN_VERSION } from '../components/modal/userGuideConte
 import { skipsStartupExperience } from '../dev/devLaunchFlags';
 import { hasOnboardingLibrarySuiteChoice } from '../library/app/librarySuiteChoice';
 import { requestPlaybackEntryViewPrompt, usePlaybackEntryViewStore } from '../stores/usePlaybackEntryViewStore';
+import { loadSourcesOnboarding, useSourcesOnboardingStore } from '../components/modal/playback-entry-view/sourcesOnboarding';
 import { useSettingsModalStore } from '../stores/useSettingsModalStore';
 import { getStoredBoolean, setStoredBoolean } from '../stores/storagePrimitives';
 
@@ -34,6 +35,11 @@ type StartupExperienceState = {
      * else here it is not gated by the release: everyone is asked once (2026-10-10), whatever version they are on.
      */
     needsLibrarySuitePrompt: boolean;
+    /**
+     * The sources page is still owed (Folium 2.0 plan §5.3): the main process gave this fresh profile 'pending' and
+     * it has not been answered. Like the library-interface page it is not gated by the release.
+     */
+    needsSourcesPrompt: boolean;
     isPlaybackEntryViewPromptOpen: boolean;
     isPonderOnboardingOpen: boolean;
 };
@@ -49,6 +55,7 @@ export const resolveStartupExperienceStep = ({
     isReleaseNotesOpen,
     hasChosenPlaybackEntryView,
     needsLibrarySuitePrompt,
+    needsSourcesPrompt,
     isPlaybackEntryViewPromptOpen,
     isPonderOnboardingOpen,
 }: StartupExperienceState): StartupExperienceStep => {
@@ -67,8 +74,9 @@ export const resolveStartupExperienceStep = ({
     if (releaseDue && !hasSeenReleaseNotes) {
         return 'release-notes';
     }
-    // The library-interface page is owed once to every install, outside the release gate.
-    if ((releaseDue && !hasChosenPlaybackEntryView) || needsLibrarySuitePrompt) {
+    // The library-interface page is owed once to every install, the sources page once to a fresh profile, both
+    // outside the release gate.
+    if ((releaseDue && !hasChosenPlaybackEntryView) || needsLibrarySuitePrompt || needsSourcesPrompt) {
         return 'playback-entry-view';
     }
     return releaseDue && !hasSeenPonder ? 'ponder' : null;
@@ -84,9 +92,9 @@ const readHasSeenGoliaWelcome = (): boolean => getStoredBoolean(GOLIA_WELCOME_SH
 
 /**
  * Runs the first-launch sequence: the Golia welcome dialog (once per install), then release
- * notes, the two-page choice prompt (library interface, then playback destination), then the
- * Ponder shortcut gate. The prompt is gated by the playback choice alone, so installs that
- * answered the older single-page prompt are not asked again.
+ * notes, the choice prompt (the sources a fresh profile uses, library interface, then playback
+ * destination), then the Ponder shortcut gate. The prompt is gated by the playback choice alone,
+ * so installs that answered the older single-page prompt are not asked again.
  */
 export const useStartupExperienceGate = () => {
     const lastSeenPonderVersion = useSettingsModalStore(state => state.lastSeenGuideVersion);
@@ -98,6 +106,8 @@ export const useStartupExperienceGate = () => {
     const isPlaybackEntryViewPromptOpen = usePlaybackEntryViewStore(state => state.isPlaybackEntryViewPromptOpen);
     const [hasSeenGoliaWelcome, setHasSeenGoliaWelcome] = useState(readHasSeenGoliaWelcome);
     const [isGoliaWelcomeOpen, setIsGoliaWelcomeOpen] = useState(false);
+    const sourcesOnboardingStatus = useSourcesOnboardingStore(state => state.status);
+    const needsSourcesPrompt = sourcesOnboardingStatus === 'owed';
     const [lastSeenReleaseNotesVersion, setLastSeenReleaseNotesVersion] = useState(readLastSeenReleaseNotesVersion);
     const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
     const appVersion = typeof __APP_VERSION__ === 'undefined' ? null : __APP_VERSION__;
@@ -113,9 +123,17 @@ export const useStartupExperienceGate = () => {
         isReleaseNotesOpen,
         hasChosenPlaybackEntryView,
         needsLibrarySuitePrompt,
+        needsSourcesPrompt,
         isPlaybackEntryViewPromptOpen,
         isPonderOnboardingOpen,
     });
+
+    // Whether a fresh profile owes the sources page, asked of the main process once (the web build: never). Not
+    // asked under the dev shortcut: nothing opens and nothing is recorded, so a fresh profile runs no source until
+    // one is switched in "Settings → Sources" (which counts as the answer).
+    useEffect(() => {
+        if (!skipsStartupExperience) void loadSourcesOnboarding();
+    }, []);
 
     useEffect(() => {
         if (nextStep === 'golia-welcome') {
@@ -123,11 +141,16 @@ export const useStartupExperienceGate = () => {
         } else if (nextStep === 'release-notes') {
             setIsReleaseNotesOpen(true);
         } else if (nextStep === 'playback-entry-view') {
-            requestPlaybackEntryViewPrompt({ withLibrarySuite: hasOnboardingLibrarySuiteChoice() });
+            // The prompt's pages are fixed when it opens: it waits for the main process's word on the sources page.
+            if (sourcesOnboardingStatus === 'unknown') return;
+            requestPlaybackEntryViewPrompt({
+                withSources: sourcesOnboardingStatus === 'owed',
+                withLibrarySuite: hasOnboardingLibrarySuiteChoice(),
+            });
         } else if (nextStep === 'ponder') {
             setIsPonderOnboardingOpen(true);
         }
-    }, [nextStep, setIsPonderOnboardingOpen]);
+    }, [nextStep, sourcesOnboardingStatus, setIsPonderOnboardingOpen]);
 
     const closeGoliaWelcome = useCallback(() => {
         setStoredBoolean(GOLIA_WELCOME_SHOWN_STORAGE_KEY, true);

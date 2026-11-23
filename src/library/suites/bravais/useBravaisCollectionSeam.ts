@@ -139,6 +139,9 @@ export const useBravaisCollectionSeam = (input: BravaisCollectionSeamInput) => {
                 run: () => latest.current.actions.collectScope(),
             });
         }
+        // 平台歌单 / 专辑存成 Folia 歌单；转存来的歌单从原歌单更新。都只是打开宿主的对话框。
+        if (offers('save-to-folia')) items.push({ id: 'save-to-folia', label: t('foliaTransfer.saveAction'), run: runMutation(c => c.saveToFolia()) });
+        if (offers('refresh-from-origin')) items.push({ id: 'refresh-from-origin', label: t('foliaTransfer.refreshAction'), run: runMutation(c => c.refreshFromOrigin()) });
         if (offers('resync-folder')) items.push({ id: 'resync-folder', label: t('localMusic.reimport'), disabled: pending, run: runMutation(c => c.resyncFolder()) });
         if (offers('resync-all-folders')) items.push({ id: 'resync-all-folders', label: t('localMusic.reimport'), disabled: pending, run: runMutation(c => c.resyncAllFolders()) });
         if (offers('organize-song-info')) items.push({ id: 'organize-song-info', label: t('localMusic.organizeSongInfo'), run: runMutation(c => c.organizeSongInfo()) });

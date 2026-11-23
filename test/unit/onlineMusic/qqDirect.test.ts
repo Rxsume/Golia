@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createQqCore } from '../helpers/qqSource';
 
 // test/unit/onlineMusic/qqDirect.test.ts
 
@@ -23,9 +24,12 @@ const MUSICU_SEARCH_ANSWER = {
 const nativeRequest = (data: unknown) => vi.fn().mockResolvedValue({ status: 200, headers: {}, data });
 
 describe('QQ direct transport (no backend configured)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.resetModules();
         storage.clear();
+        // The direct functions live in the Folium core now, so the source env has to exist
+        // (createSource) before they are called, even on paths that never raise.
+        await createQqCore();
         vi.stubEnv('VITE_QQ_API_BASE', '');
         vi.stubGlobal('localStorage', {
             getItem: (key: string) => storage.get(key) ?? null,
@@ -44,12 +48,14 @@ describe('QQ direct transport (no backend configured)', () => {
         const request = nativeRequest(JSON.stringify(MUSICU_SEARCH_ANSWER));
         vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
         vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch must not be called')));
-        const { searchQQSongs } = await import('@/services/onlineMusic/qq/qqLyricProvider');
+        const { searchQQSongs } = await import('../../../sources/qq/core/qqLyricProvider');
 
         const songs = await searchQQSongs('海阔天空');
         expect(songs).toHaveLength(1);
-        expect(songs[0].name).toBe('海阔天空');
-        expect(songs[0].qqMid).toBe('003rJSwm3TechU');
+        // The Folium core returns FoliumSourceSong DTOs, not the host SongResult the old
+        // qqLyricProvider returned: the title is `title`, the mid is the `id`.
+        expect(songs[0].title).toBe('海阔天空');
+        expect(songs[0].id).toBe('003rJSwm3TechU');
         expect(request).toHaveBeenCalledWith(expect.objectContaining({
             url: 'https://u.y.qq.com/cgi-bin/musicu.fcg',
             method: 'POST',
@@ -61,7 +67,7 @@ describe('QQ direct transport (no backend configured)', () => {
         vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
         const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(MUSICU_SEARCH_ANSWER), { status: 200 }));
         vi.stubGlobal('fetch', fetchMock);
-        const { searchQQSongs } = await import('@/services/onlineMusic/qq/qqLyricProvider');
+        const { searchQQSongs } = await import('../../../sources/qq/core/qqLyricProvider');
 
         const songs = await searchQQSongs('海阔天空');
         expect(songs).toHaveLength(1);
@@ -72,7 +78,7 @@ describe('QQ direct transport (no backend configured)', () => {
         const request = nativeRequest(JSON.stringify({ code: 0, search: { code: 0, data: { body: {} } } }));
         vi.stubGlobal('window', { Capacitor: { Plugins: { CapacitorHttp: { request } } } });
         vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch must not be called')));
-        const { requestQqMusicu } = await import('@/services/onlineMusic/qq/qqTransport');
+        const { requestQqMusicu } = await import('../../../sources/qq/core/qqTransport');
 
         const answers = await requestQqMusicu({
             search: { module: 'music.search.SearchCgiService', method: 'DoSearchForQQMusicLite', param: { query: 'x' } },

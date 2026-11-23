@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // by a route table on the plugin; the network never leaves the test.
 
 import { getQishuiAvailability, getQishuiLastFailure, QishuiRequestError, requestQishui, resetQishuiTransportRuntimeCache } from '@/services/onlineMusic/qishui/qishuiTransport';
-import { qishuiProvider } from '@/services/onlineMusic/qishui/qishuiProvider';
 
 type Route = [string, { json: unknown; headers?: Record<string, string> }];
 
@@ -81,7 +80,6 @@ describe('Qishui direct transport', () => {
         const request = installNativeHttp([tokenRoute, searchRoute]);
 
         expect(getQishuiAvailability()).toEqual({ configured: true });
-        expect(qishuiProvider.aggregatedSearch).toBe(true);
         const result = await requestQishui<{ items: Array<{ id: string; base_info: { title: string } }> }>('search', { query: '周杰伦', limit: 5, offset: 0 });
         expect(result.items).toHaveLength(1);
         expect(result.items[0].id).toBe('123');

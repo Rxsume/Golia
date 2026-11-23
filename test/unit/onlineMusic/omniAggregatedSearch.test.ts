@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { omni } from '@/services/onlineMusic/omni';
 import { registerOnlineMusicProvider, unregisterOnlineMusicProvider } from '@/services/onlineMusic/providerRegistry';
-import { neteaseProvider } from '@/services/onlineMusic/netease/neteaseProvider';
-import { qqProvider } from '@/services/onlineMusic/qq/qqProvider';
-import { kugouProvider } from '@/services/onlineMusic/kugou/kugouProvider';
 import type { UnifiedSong } from '@/types';
 import type { OnlineMusicProvider, ProviderCapabilities } from '@/types/onlineMusic';
 
@@ -47,17 +44,18 @@ const providerOf = (item: UnifiedSong): string => (
 );
 const keyOf = (item: UnifiedSong): string => `${providerOf(item)}:${item.sourceRef.mediaId}`;
 
-const realAggregatedProviders = [neteaseProvider, kugouProvider, qqProvider];
+// The real providers join the aggregation too (aggregatedSearch): take them out so these tests
+// only ask the fakes below. This file has no `// @builtin-sources` marker, so the Folium
+// sources are never registered here and there is nothing to put back afterwards; the old
+// provider objects this used to import were deleted upstream (sources/<id>/core/ now).
+const REAL_AGGREGATED_PROVIDER_IDS = ['netease', 'kugou', 'qq'] as const;
 
-// The real providers join the aggregation too: take them out so these tests only ask the
-// fakes below, and put them back afterwards.
 beforeEach(() => {
-    realAggregatedProviders.forEach(provider => unregisterOnlineMusicProvider(provider.id));
+    REAL_AGGREGATED_PROVIDER_IDS.forEach(id => unregisterOnlineMusicProvider(id));
 });
 
 afterEach(() => {
     ids.forEach(id => unregisterOnlineMusicProvider(id));
-    realAggregatedProviders.forEach(provider => registerOnlineMusicProvider(provider));
     vi.restoreAllMocks();
 });
 

@@ -16,9 +16,12 @@ export const MOD_INTEGRATION_POINTS = [
     'src/components/app/playback/bridges/useElectronPlaybackBridge.ts',
     'src/components/command-palette/commands/playbackCommands.ts',
     'src/components/command-palette/globalShortcuts/useGlobalShortcuts.ts',
+    'src/components/command-palette/sourceSwitchCommandsInstaller.ts',
     'src/components/command-palette/surfaces/modsSurface.ts',
+    'src/components/modal/playback-entry-view/sourcesOnboarding.ts',
     'src/components/modal/settings/pages/GlobalShortcutsGroup.tsx',
     'src/components/modal/settings/pages/ModsPage.tsx',
+    'src/components/modal/settings/pages/sources/useSourcesSettings.ts',
     'src/components/modal/settings/pages/storage/visualConfigTransfer.ts',
     'src/components/remote/RemoteActionButtons.tsx', // README 没写（待补）
     'src/components/scenes/settings/SceneRow.tsx',
@@ -32,5 +35,6 @@ export const MOD_INTEGRATION_POINTS = [
     'src/components/visualizer/window/VisPlaygroundSettingsPanel.tsx',
     'src/dev/mockSong.ts', // README 没写（待补）
     'src/hooks/useRemoteControlActions.ts', // README 没写（待补）
+    'src/services/onlineMusic/web/foliumWebSource.ts',
     'src/services/remoteControlActions.ts',
 ];
